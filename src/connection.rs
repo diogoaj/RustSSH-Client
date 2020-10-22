@@ -35,17 +35,14 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     write_line(&mut writer, "SSH-2.0-Simple_Rust_Client_1.0\r\n")?;
 
-    let size = read_line(&mut reader)?;
-    let mut packet_size: [u8; 4] = [0; 4];
-    packet_size.copy_from_slice(size.trim().as_bytes());
-
-    println!("Size of incoming connection: {:?}", u32::from_be_bytes(packet_size));
-
     let received: Vec<u8> = reader.fill_buf()?.to_vec();
-    let cookie = &received[1..17];
+    let size = &received[0..4];
+    let pad = &received[5];
+    let code = &received[6];
+    let cookie = &received[6..22];
 
     let mut server_algorithms: Vec<&str> = Vec::new();
-    let mut i = 17;
+    let mut i = 22;
 
     loop {
         let mut size_bytes: [u8; 4] = [0; 4];
@@ -83,9 +80,11 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
     ciphers.append(&mut algorithms::COMPRESSION_ALGORITHM.as_bytes().to_vec());
     ciphers.append(&mut (algorithms::COMPRESSION_ALGORITHM.len() as u32).to_be_bytes().to_vec());
     ciphers.append(&mut algorithms::COMPRESSION_ALGORITHM.as_bytes().to_vec());
-    ciphers.append(&mut vec![0;23]);
+    ciphers.append(&mut vec![0;13]);
 
-    let cipher_list_len = ((ciphers.len() + 1) as u32).to_be_bytes().to_vec();
+    let padding = 16 - (ciphers.len() as u32 + 5) % 16;
+
+    let cipher_list_len = ((ciphers.len() + 1 + padding as usize) as u32).to_be_bytes().to_vec();
 
     let mut i = 0;
     for b in cipher_list_len.iter() {
@@ -93,33 +92,33 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
         i += 1;
     }
 
-    ciphers.insert(i, 0xa);
+    ciphers.insert(i, padding as u8);
+    ciphers.append(&mut vec![0; padding as usize]);
 
     writer.write(ciphers.as_slice())?;
     writer.flush()?;
 
+    ///////////////////////////////////////
 
-    let mut key_exchange: Vec<u8> = Vec::new();
+    // let mut key_exchange: Vec<u8> = Vec::new();
 
-    key_exchange.push(30);
-    key_exchange.push(0);
-    key_exchange.push(0);
-    key_exchange.push(0);
-    key_exchange.push(0x20);
-    key_exchange.append(&mut vec![0x69,0x45,0x32,0x50,0xc5,0x59,0x60,0x52,0x1c,0xf9,0xd5,0xc6,0x38,0x47,0xa8,0x50,0x69,0x45,0x32,0x50,0xc5,0x59,0x60,0x52,0x1c,0xf9,0xd5,0xc6,0x38,0x47,0xa8,0x50]);
-    key_exchange.append(&mut vec![0;6]);
+    // key_exchange.push(30);
+    // key_exchange.append(&mut 32_u32.to_be_bytes().to_vec());
+    // key_exchange.append(&mut vec![0x69,0x45,0x32,0x50,0xc5,0x59,0x60,0x52,0x1c,0xf9,0xd5,0xc6,0x38,0x47,0xa8,0x50,0x69,0x45,0x32,0x50,0xc5,0x59,0x60,0x52,0x1c,0xf9,0xd5,0xc6,0x38,0x47,0xa8,0x50]);
 
-    let key_exchange_len = ((key_exchange.len() + 1) as u32).to_be_bytes().to_vec();    
+    // let padding = 8 - (key_exchange.len() as u32 + 5) % 8;
+    // let key_exchange_len = ((key_exchange.len() + 1 + padding as usize) as u32).to_be_bytes().to_vec();    
 
-    let mut j = 0;
-    for b in key_exchange_len.iter() {
-        key_exchange.insert(j, *b);
-        j += 1;
-    }
+    // let mut j = 0;
+    // for b in key_exchange_len.iter() {
+    //     key_exchange.insert(j, *b);
+    //     j += 1;
+    // }
 
-    key_exchange.insert(j, 6);
+    // key_exchange.insert(j, padding as u8);
+    // key_exchange.append(&mut vec![0; padding as usize]);
 
-    writer.write(key_exchange.as_slice())?;
+    // writer.write(key_exchange.as_slice())?;
 
     Ok(())
 }
