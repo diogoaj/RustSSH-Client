@@ -8,3 +8,7 @@ edition = "2018"
 
 [dependencies]
 clap = "3.0.0-beta.1" 
+curve25519-dalek = "3"
+ring = "0.16.15"
+x25519-dalek = "0.6"
+rand = "*"

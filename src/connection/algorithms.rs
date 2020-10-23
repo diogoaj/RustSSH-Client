@@ -1,14 +1,14 @@
 // Key Exchange Method Names
-pub const KEY_EXCHANGE_ALGORITHM: &str = "diffie-hellman-group14-sha256";
+pub const KEY_EXCHANGE_ALGORITHMS: &str = "diffie-hellman-group14-sha256";
 
 // Public Key Algorithm Names
-pub const PUBLIC_KEY_ALGORITHM: &str = "ssh-rsa";
+pub const PUBLIC_KEY_ALGORITHMS: &str = "ssh-rsa";
 
 // Encryption Algorithm Names
-pub const ENCRYPTION_ALGORITHM: &str = "aes256-ctr";
+pub const ENCRYPTION_ALGORITHMS: &str = "chacha20-poly1305@openssh.com";
 
 // MAC Algorithm Names
-pub const MAC_ALGORITHM: &str = "hmac-sha1";
+pub const MAC_ALGORITHMS: &str = "hmac-sha1";
 
 // Compression Algorithm Names
-pub const COMPRESSION_ALGORITHM: &str = "none";
+pub const COMPRESSION_ALGORITHMS: &str = "none";

@@ -1,5 +1,6 @@
-struct Message;
+pub struct Message;
 
+#[allow(dead_code)]
 impl Message {
     pub const SSH_MSG_DISCONNECT: u8 = 1;
     pub const SSH_MSG_IGNORE: u8 = 2;   
@@ -9,6 +10,8 @@ impl Message {
     pub const SSH_MSG_SERVICE_ACCEPT: u8 = 6;
     pub const SSH_MSG_KEXINIT: u8 = 20;
     pub const SSH_MSG_NEWKEYS: u8 = 21;
+    pub const SSH_MSG_KEX_ECDH_INIT: u8 = 30;
+    pub const SSH_MSG_KEX_ECDH_REPLY: u8 = 31;
     pub const SSH_MSG_USERAUTH_REQUEST: u8 = 50;
     pub const SSH_MSG_USERAUTH_FAILURE: u8 = 51; 
     pub const SSH_MSG_USERAUTH_SUCCESS: u8 = 52;   
@@ -28,8 +31,10 @@ impl Message {
     pub const SSH_MSG_CHANNEL_FAILURE: u8 = 100;
 }
 
-struct DisconnectionMessage;
+#[allow(dead_code)]
+pub struct DisconnectionMessage;
 
+#[allow(dead_code)]
 impl DisconnectionMessage {
     pub const SSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT: u8 = 1;
     pub const SSH_DISCONNECT_PROTOCOL_ERROR: u8 = 2;
