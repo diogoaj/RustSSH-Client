@@ -1,8 +1,8 @@
 // Key Exchange Method Names
-pub const KEY_EXCHANGE_ALGORITHMS: &str = "diffie-hellman-group14-sha256";
+pub const KEY_EXCHANGE_ALGORITHMS: &str = "curve25519-sha256";
 
 // Public Key Algorithm Names
-pub const PUBLIC_KEY_ALGORITHMS: &str = "ssh-rsa";
+pub const PUBLIC_KEY_ALGORITHMS: &str = "ssh-ed25519";
 
 // Encryption Algorithm Names
 pub const ENCRYPTION_ALGORITHMS: &str = "chacha20-poly1305@openssh.com";

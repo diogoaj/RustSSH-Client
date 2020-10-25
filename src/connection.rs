@@ -5,10 +5,14 @@ use std::io::BufWriter;
 use std::net::IpAddr;
 use std::str;
 
-use rand::{thread_rng, Rng};
+use rand::Rng;
 use rand::rngs::OsRng;
-use x25519_dalek::EphemeralSecret;
-use x25519_dalek::PublicKey;
+use x25519_dalek::{EphemeralSecret, PublicKey};
+use ed25519_dalek::*;
+use ring::{digest, aead};
+use core::convert::TryInto;
+use std::convert::From;
+
 
 mod numbers;
 mod algorithms;
@@ -27,7 +31,7 @@ pub fn write_line(writer: &mut BufWriter<&TcpStream>, line: &str) -> std::io::Re
 }
 
 pub fn send_data(writer: &mut BufWriter<&TcpStream>, data: &mut Vec<u8>) -> std::io::Result<()> {
-    let padding = 16 - (data.len() as u32 + 5) % 16;
+    let padding = 32 - (data.len() as u32 + 5) % 32;
     let data_len = ((data.len() + 1 + padding as usize) as u32).to_be_bytes().to_vec();
 
     let mut i = 0;
@@ -42,6 +46,29 @@ pub fn send_data(writer: &mut BufWriter<&TcpStream>, data: &mut Vec<u8>) -> std:
     writer.write(data.as_slice())?;
     writer.flush()
 }
+
+pub fn make_hash(
+    v_c: &str, 
+    v_s: &str, 
+    i_c: &mut Vec<u8>, 
+    i_s: &mut Vec<u8>, 
+    k_s: &mut Vec<u8>, 
+    e: &mut Vec<u8>, 
+    f: &mut Vec<u8>,
+    k: &mut Vec<u8>) -> Vec<u8> {
+
+        let mut hash_data: Vec<u8> = Vec::new();
+        hash_data.append(&mut v_c.as_bytes().to_vec());
+        hash_data.append(&mut v_s.as_bytes().to_vec());
+        hash_data.append(i_c);
+        hash_data.append(i_s);
+        hash_data.append(k_s);
+        hash_data.append(e);
+        hash_data.append(f);
+        hash_data.append(k);
+
+        digest::digest(&digest::SHA256, hash_data.as_slice()).as_ref().to_vec()
+    }
 
 
 // Testing SSH handshake
@@ -62,6 +89,8 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
     write_line(&mut writer, protocol_string)?;
 
     let received: Vec<u8> = reader.fill_buf()?.to_vec();
+    reader.consume(received.len());
+
     let _size = &received[0..4];
     let _pad = &received[5];
     let _code = &received[6];
@@ -117,7 +146,7 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     let alice_secret = EphemeralSecret::new(&mut csprng);
     let alice_public = PublicKey::from(&alice_secret);
-    let mut pub_key = alice_public.as_bytes();
+    let pub_key = alice_public.as_bytes();
 
     let mut key_exchange: Vec<u8> = Vec::new();
     key_exchange.push(numbers::Message::SSH_MSG_KEX_ECDH_INIT);
@@ -126,9 +155,28 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     send_data(&mut writer, &mut key_exchange)?;
 
-    let received: Vec<u8> = reader.fill_buf()?.to_vec();
+    ///////////////////////////////////////////////
 
-    println!("{:?}", received);
+    let mut received_k: Vec<u8> = reader.fill_buf()?.to_vec();
+    let _size = &received_k[0..4];
+    let _pad = &received_k[5];
+    let _code = &received_k[6];
+
+    let key_size = u32::from_be_bytes(received_k[6..10].try_into().unwrap());
+
+    let host_key = &received_k[10..(10 + key_size) as usize];
+
+    //println!("{:?}", host_key.to_vec());
+
+    let f = &received_k[((14 + key_size) as usize)..((14 + 32 + key_size) as usize)];
+    println!("{:?}", f.len());
+
+    let f_fixed: [u8;32] = f.try_into().unwrap();
+
+    let server_pub = PublicKey::from(f_fixed);
+    let secret = alice_secret.diffie_hellman(&server_pub);
+
+    println!("{:?}", secret.as_bytes().to_vec());
 
     Ok(())
 }
