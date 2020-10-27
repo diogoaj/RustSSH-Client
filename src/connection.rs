@@ -9,13 +9,17 @@ use rand::Rng;
 use rand::rngs::OsRng;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use ed25519_dalek::*;
-use ring::{digest, aead};
+use ring::{digest, aead::chacha20_poly1305_openssh};
 use core::convert::TryInto;
 use std::convert::From;
 
+use crate::{numbers, algorithms};
 
-mod numbers;
-mod algorithms;
+struct Keys {
+    encryption_key_client_to_server: [u8; 64],
+    encryption_key_server_to_client: [u8; 64],
+}
+
 
 
 pub fn read_line(reader: &mut BufReader<&TcpStream>) -> std::io::Result<String> {
@@ -31,7 +35,7 @@ pub fn write_line(writer: &mut BufWriter<&TcpStream>, line: &str) -> std::io::Re
 }
 
 pub fn send_data(writer: &mut BufWriter<&TcpStream>, data: &mut Vec<u8>) -> std::io::Result<()> {
-    let padding = 32 - (data.len() as u32 + 5) % 32;
+    let padding = 16 - (data.len() as u32 + 5) % 16;
     let data_len = ((data.len() + 1 + padding as usize) as u32).to_be_bytes().to_vec();
 
     let mut i = 0;
@@ -68,15 +72,69 @@ pub fn make_hash(
         hash_data.append(k);
 
         digest::digest(&digest::SHA256, hash_data.as_slice()).as_ref().to_vec()
+}
+
+
+fn make_keys(secret: &mut Vec<u8>, exchange_hash: &mut Vec<u8>) -> Keys {
+/*
+ K1 = HASH(K || H || X || session_id)   (X is e.g., "A")
+ K2 = HASH(K || H || K1)
+ K3 = HASH(K || H || K1 || K2)
+ ...
+ key = K1 || K2 || K3 || ...
+*/
+    let mut encryption_client: Vec<u8> = Vec::new();
+    encryption_client.append(&mut secret.clone());
+    encryption_client.append(&mut exchange_hash.clone());
+    encryption_client.push(67);
+    encryption_client.append(&mut exchange_hash.clone());
+
+    let mut k1_client = 
+        digest::digest(&digest::SHA256, encryption_client.as_slice()).as_ref().to_vec();
+
+    encryption_client.clear();
+    encryption_client.append(&mut secret.clone());
+    encryption_client.append(&mut exchange_hash.clone());
+    encryption_client.append(&mut k1_client.clone());
+
+
+    let mut k2_client = 
+        digest::digest(&digest::SHA256, encryption_client.as_slice()).as_ref().to_vec();
+
+    k1_client.append(&mut k2_client);
+
+    let mut encryption_server: Vec<u8> = Vec::new();
+    encryption_server.append(&mut secret.clone());
+    encryption_server.append(&mut exchange_hash.clone());
+    encryption_server.push(68);
+    encryption_server.append(&mut exchange_hash.clone());
+
+    let mut k1_server = 
+        digest::digest(&digest::SHA256, encryption_server.as_slice()).as_ref().to_vec();
+
+    encryption_server.clear();
+    encryption_server.append(&mut secret.clone());
+    encryption_server.append(&mut exchange_hash.clone());
+    encryption_server.append(&mut k1_server.clone());
+
+    let mut k2_server = 
+        digest::digest(&digest::SHA256, encryption_server.as_slice()).as_ref().to_vec();
+
+    k1_server.append(&mut k2_server);
+
+    let mut client_key_slice: [u8; 64] = [0;64];
+    client_key_slice.copy_from_slice(k1_client.as_slice());
+    let mut server_key_slice: [u8; 64] = [0;64];
+    server_key_slice.copy_from_slice(k1_server.as_slice());
+
+    Keys {
+        encryption_key_client_to_server: client_key_slice,
+        encryption_key_server_to_client: server_key_slice
     }
+}
 
 
-// Testing SSH handshake
-// 1. Sending Client Identifier
-// 2. Sending Algorithm List
-// 3. Testing key exchange
-
-pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
+pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     let socket = SocketAddr::new(host, port);
     let stream = TcpStream::connect(socket)?;
 
@@ -142,7 +200,7 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     send_data(&mut writer, &mut ciphers)?;
 
-    ///////////////////////////////////////
+    ///////////////////////////////////////// Send KEXINIT response
 
     let client_secret = EphemeralSecret::new(&mut csprng);
     let client_public = PublicKey::from(&client_secret);
@@ -155,7 +213,7 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     send_data(&mut writer, &mut key_exchange)?;
 
-    ///////////////////////////////////////////////
+    ////////////////////////////////// Generate Shared K
 
     let mut received_ecdh: Vec<u8> = reader.fill_buf()?.to_vec();
     let _size = &received_ecdh[0..4];
@@ -183,13 +241,16 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
     let server_pub = PublicKey::from(f_fixed);
     let secret = client_secret.diffie_hellman(&server_pub);
 
+
+    ///////////////////////////// Create Exchange Hash
+
     let mut v_c: Vec<u8> = Vec::new();
     v_c.append(&mut (30 as u32).to_be_bytes().to_vec());
     v_c.append(&mut "SSH-2.0-Simple_Rust_Client_1.0".as_bytes().to_vec());
 
     let mut v_s: Vec<u8> = Vec::new();
-    v_s.append(&mut (39 as u32).to_be_bytes().to_vec());
-    v_s.append(&mut "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.1".as_bytes().to_vec());
+    v_s.append(&mut (19 as u32).to_be_bytes().to_vec());
+    v_s.append(&mut "SSH-2.0-OpenSSH_8.4".as_bytes().to_vec());
 
     let mut k_s = received_ecdh[6..(10 + key_size) as usize].to_vec();
 
@@ -201,33 +262,63 @@ pub fn run(host: IpAddr, port: u16) -> std::io::Result<()>{
     f.append(&mut (32 as u32).to_be_bytes().to_vec());
     f.append(&mut f_fixed.to_vec());
 
+    // mpint logic
     let mut k: Vec<u8> = Vec::new();
-    k.append(&mut (32 as u32).to_be_bytes().to_vec());
+    if secret.as_bytes()[0] & 128 == 128 {
+        k.append(&mut 33u32.to_be_bytes().to_vec());
+        k.push(0);
+    } else {
+        k.append(&mut 32u32.to_be_bytes().to_vec());
+    };
+
     k.append(&mut secret.as_bytes().to_vec());
 
-    let mut ciphers_v2: Vec<u8> = Vec::new();
-    ciphers_v2.append(&mut (174 as u32).to_be_bytes().to_vec());
+    let mut i_c: Vec<u8> = Vec::new();
+    i_c.append(&mut (174 as u32).to_be_bytes().to_vec());
     ciphers = ciphers[5..(ciphers.len() - 13)].to_vec();
-    ciphers_v2.append(&mut ciphers);
+    i_c.append(&mut ciphers);
 
-    let mut kex_v2: Vec<u8> = Vec::new();
-    kex_v2.append(&mut (1041 as u32).to_be_bytes().to_vec());
+    let mut i_s: Vec<u8> = Vec::new();
+    i_s.append(&mut (1041 as u32).to_be_bytes().to_vec());
     received_kex = received_kex[5..(received_kex.len() - 10)].to_vec();
-    kex_v2.append(&mut received_kex);
+    i_s.append(&mut received_kex);
     
 
-    let h = make_hash(&mut v_c, 
-                               &mut v_s,
-                          &mut ciphers_v2, 
-                          &mut kex_v2, 
-                               &mut k_s, 
-                               &mut e, 
-                               &mut f, 
-                               &mut k);
+    let mut exchange_hash = make_hash(&mut v_c, 
+                                           &mut v_s,
+                                           &mut i_c, 
+                                           &mut i_s, 
+                                           &mut k_s, 
+                                           &mut e, 
+                                           &mut f, 
+                                           &mut k.clone());
 
     //println!("{:?}", h);
 
-    println!("{:?}", host_key_ed25519.verify(h.as_slice(), &ed25519_signature).is_ok());
+    // Host Key check was skipped - TODO
+    // Checking server's signature
+    println!("Signature Check: {:?}", host_key_ed25519.verify(exchange_hash.as_slice(), 
+                                                              &ed25519_signature).is_ok());
+
+    ///////////////////////////////// NEW_KEYS
+
+    let mut new_keys: Vec<u8> = Vec::new();
+    new_keys.push(numbers::Message::SSH_MSG_NEWKEYS);
+
+    send_data(&mut writer, &mut new_keys)?;
+
+    /////////////////////////////////
+
+    let keys = make_keys(&mut k, &mut exchange_hash);
+
+    ////////////////////////////////
+
+    let mut service_req: Vec<u8> = Vec::new();
+    service_req.push(numbers::Message::SSH_MSG_SERVICE_REQUEST);  
+    service_req.append(&mut (12 as u32).to_be_bytes().to_vec());
+    service_req.append(&mut "ssh-userauth".as_bytes().to_vec());
+
+    //send_data(&mut writer, &mut service_req)?;
 
     Ok(())
 }
