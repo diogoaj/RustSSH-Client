@@ -9,18 +9,30 @@ use rand::Rng;
 use rand::rngs::OsRng;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use ed25519_dalek::*;
-use ring::{digest, aead::chacha20_poly1305_openssh};
+use ring::{aead::chacha20_poly1305_openssh, digest, hmac};
 use core::convert::TryInto;
 use std::convert::From;
+
+use aes_ctr::Aes256Ctr;
+use aes_ctr::cipher::{
+    generic_array::GenericArray,
+    stream::{
+        NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek
+    }
+};
+
+use aes_ctr::cipher::generic_array::typenum::{U16, U32};
 
 use crate::{numbers, algorithms};
 
 struct Keys {
-    encryption_key_client_to_server: [u8; 64],
-    encryption_key_server_to_client: [u8; 64],
+    initial_iv_client_to_server: [u8;32],
+    initial_iv_server_to_client: [u8;32],
+    encryption_key_client_to_server: [u8; 32],
+    encryption_key_server_to_client: [u8; 32],
+    integrity_key_client_to_server: [u8; 32],
+    integrity_key_server_to_client: [u8; 32],
 }
-
-
 
 pub fn read_line(reader: &mut BufReader<&TcpStream>) -> std::io::Result<String> {
     let mut data = String::new();
@@ -34,8 +46,13 @@ pub fn write_line(writer: &mut BufWriter<&TcpStream>, line: &str) -> std::io::Re
     Ok(())
 }
 
-pub fn send_data(writer: &mut BufWriter<&TcpStream>, data: &mut Vec<u8>) -> std::io::Result<()> {
-    let padding = 16 - (data.len() as u32 + 5) % 16;
+pub fn process_data(data: &mut Vec<u8>) {
+    let mut padding = 8 - (data.len() as u32 + 5) % 8;
+
+    if padding < 4{
+        padding += 8
+    }
+
     let data_len = ((data.len() + 1 + padding as usize) as u32).to_be_bytes().to_vec();
 
     let mut i = 0;
@@ -46,9 +63,6 @@ pub fn send_data(writer: &mut BufWriter<&TcpStream>, data: &mut Vec<u8>) -> std:
 
     data.insert(i, padding as u8);
     data.append(&mut vec![0; padding as usize]);
-
-    writer.write(data.as_slice())?;
-    writer.flush()
 }
 
 pub fn make_hash(
@@ -71,18 +85,14 @@ pub fn make_hash(
         hash_data.append(f);
         hash_data.append(k);
 
+        //println!("{:x?}", hash_data);
+
         digest::digest(&digest::SHA256, hash_data.as_slice()).as_ref().to_vec()
 }
 
 
 fn make_keys(secret: &mut Vec<u8>, exchange_hash: &mut Vec<u8>) -> Keys {
-/*
- K1 = HASH(K || H || X || session_id)   (X is e.g., "A")
- K2 = HASH(K || H || K1)
- K3 = HASH(K || H || K1 || K2)
- ...
- key = K1 || K2 || K3 || ...
-*/
+
     let mut encryption_client: Vec<u8> = Vec::new();
     encryption_client.append(&mut secret.clone());
     encryption_client.append(&mut exchange_hash.clone());
@@ -91,17 +101,6 @@ fn make_keys(secret: &mut Vec<u8>, exchange_hash: &mut Vec<u8>) -> Keys {
 
     let mut k1_client = 
         digest::digest(&digest::SHA256, encryption_client.as_slice()).as_ref().to_vec();
-
-    encryption_client.clear();
-    encryption_client.append(&mut secret.clone());
-    encryption_client.append(&mut exchange_hash.clone());
-    encryption_client.append(&mut k1_client.clone());
-
-
-    let mut k2_client = 
-        digest::digest(&digest::SHA256, encryption_client.as_slice()).as_ref().to_vec();
-
-    k1_client.append(&mut k2_client);
 
     let mut encryption_server: Vec<u8> = Vec::new();
     encryption_server.append(&mut secret.clone());
@@ -112,24 +111,58 @@ fn make_keys(secret: &mut Vec<u8>, exchange_hash: &mut Vec<u8>) -> Keys {
     let mut k1_server = 
         digest::digest(&digest::SHA256, encryption_server.as_slice()).as_ref().to_vec();
 
-    encryption_server.clear();
-    encryption_server.append(&mut secret.clone());
-    encryption_server.append(&mut exchange_hash.clone());
-    encryption_server.append(&mut k1_server.clone());
-
-    let mut k2_server = 
-        digest::digest(&digest::SHA256, encryption_server.as_slice()).as_ref().to_vec();
-
-    k1_server.append(&mut k2_server);
-
-    let mut client_key_slice: [u8; 64] = [0;64];
+    let mut client_key_slice: [u8; 32] = [0;32];
     client_key_slice.copy_from_slice(k1_client.as_slice());
-    let mut server_key_slice: [u8; 64] = [0;64];
+    let mut server_key_slice: [u8; 32] = [0;32];
     server_key_slice.copy_from_slice(k1_server.as_slice());
 
+    let mut k1_client = 
+        digest::digest(&digest::SHA256, encryption_client.as_slice()).as_ref().to_vec();
+
+    let mut iv_client_to_server: [u8;32] = [0;32];
+    let mut iv_client: Vec<u8> = Vec::new();
+    iv_client.append(&mut secret.clone());
+    iv_client.append(&mut exchange_hash.clone());
+    iv_client.push(65);
+    iv_client.append(&mut exchange_hash.clone());
+
+    iv_client_to_server.copy_from_slice(digest::digest(&digest::SHA256, iv_client.as_slice()).as_ref());
+
+    let mut iv_server_to_client: [u8;32] = [0;32];
+    let mut iv_server: Vec<u8> = Vec::new();
+    iv_server.append(&mut secret.clone());
+    iv_server.append(&mut exchange_hash.clone());
+    iv_server.push(66);
+    iv_server.append(&mut exchange_hash.clone());
+    
+    iv_server_to_client.copy_from_slice(digest::digest(&digest::SHA256, iv_server.as_slice()).as_ref());
+
+
+    let mut integrity_client_to_server: [u8;32] = [0;32];
+    let mut integrity_client: Vec<u8> = Vec::new();
+    integrity_client.append(&mut secret.clone());
+    integrity_client.append(&mut exchange_hash.clone());
+    integrity_client.push(69);
+    integrity_client.append(&mut exchange_hash.clone());
+
+    integrity_client_to_server.copy_from_slice(digest::digest(&digest::SHA256, integrity_client.as_slice()).as_ref());
+
+    let mut integrity_server_to_client: [u8;32] = [0;32];
+    let mut integrity_server: Vec<u8> = Vec::new();
+    integrity_server.append(&mut secret.clone());
+    integrity_server.append(&mut exchange_hash.clone());
+    integrity_server.push(70);
+    integrity_server.append(&mut exchange_hash.clone());
+    
+    integrity_server_to_client.copy_from_slice(digest::digest(&digest::SHA256, integrity_server.as_slice()).as_ref());
+
     Keys {
+        initial_iv_client_to_server: iv_client_to_server,
+        initial_iv_server_to_client: iv_server_to_client,
         encryption_key_client_to_server: client_key_slice,
-        encryption_key_server_to_client: server_key_slice
+        encryption_key_server_to_client: server_key_slice,
+        integrity_key_client_to_server: integrity_client_to_server,
+        integrity_key_server_to_client: integrity_server_to_client
     }
 }
 
@@ -198,7 +231,9 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     ciphers.append(&mut algorithms::COMPRESSION_ALGORITHMS.as_bytes().to_vec());
     ciphers.append(&mut vec![0;13]);
 
-    send_data(&mut writer, &mut ciphers)?;
+    process_data(&mut ciphers);
+    writer.write(ciphers.as_slice())?;
+    writer.flush();
 
     ///////////////////////////////////////// Send KEXINIT response
 
@@ -211,7 +246,9 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     key_exchange.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
     key_exchange.append(&mut pub_key.to_vec());
 
-    send_data(&mut writer, &mut key_exchange)?;
+    process_data(&mut key_exchange);
+    writer.write(key_exchange.as_slice())?;
+    writer.flush();
 
     ////////////////////////////////// Generate Shared K
 
@@ -249,8 +286,8 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     v_c.append(&mut "SSH-2.0-Simple_Rust_Client_1.0".as_bytes().to_vec());
 
     let mut v_s: Vec<u8> = Vec::new();
-    v_s.append(&mut (19 as u32).to_be_bytes().to_vec());
-    v_s.append(&mut "SSH-2.0-OpenSSH_8.4".as_bytes().to_vec());
+    v_s.append(&mut (39 as u32).to_be_bytes().to_vec());
+    v_s.append(&mut "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.1".as_bytes().to_vec());
 
     let mut k_s = received_ecdh[6..(10 + key_size) as usize].to_vec();
 
@@ -274,8 +311,8 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     k.append(&mut secret.as_bytes().to_vec());
 
     let mut i_c: Vec<u8> = Vec::new();
-    i_c.append(&mut (174 as u32).to_be_bytes().to_vec());
-    ciphers = ciphers[5..(ciphers.len() - 13)].to_vec();
+    i_c.append(&mut (144 as u32).to_be_bytes().to_vec());
+    ciphers = ciphers[5..(ciphers.len() - 11)].to_vec();
     i_c.append(&mut ciphers);
 
     let mut i_s: Vec<u8> = Vec::new();
@@ -293,7 +330,7 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
                                            &mut f, 
                                            &mut k.clone());
 
-    //println!("{:?}", h);
+    //println!("{:x?}", exchange_hash);
 
     // Host Key check was skipped - TODO
     // Checking server's signature
@@ -305,7 +342,9 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     let mut new_keys: Vec<u8> = Vec::new();
     new_keys.push(numbers::Message::SSH_MSG_NEWKEYS);
 
-    send_data(&mut writer, &mut new_keys)?;
+    process_data(&mut new_keys);
+    writer.write(new_keys.as_slice())?;
+    writer.flush()?;
 
     /////////////////////////////////
 
@@ -318,7 +357,29 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     service_req.append(&mut (12 as u32).to_be_bytes().to_vec());
     service_req.append(&mut "ssh-userauth".as_bytes().to_vec());
 
-    //send_data(&mut writer, &mut service_req)?;
+    process_data(&mut service_req);
 
+    let mut mac: Vec<u8> = Vec::new();
+    mac.append(&mut (3 as u32).to_be_bytes().to_vec());
+    mac.append(&mut service_req.clone());
+
+    let key: &GenericArray<_, U32> = GenericArray::from_slice(keys.encryption_key_client_to_server.as_ref());
+    let nonce: &GenericArray<_, U16> = GenericArray::from_slice(&keys.initial_iv_client_to_server[0..16]);
+
+    let mut cipher = Aes256Ctr::new(&key, &nonce);
+
+    cipher.apply_keystream(service_req.as_mut_slice());
+
+    let int_key = hmac::Key::new(hmac::HMAC_SHA256, &keys.integrity_key_client_to_server);
+    let tag = hmac::sign(&int_key, &mac.as_slice());
+
+    println!("{:?}", service_req);
+
+    service_req.append(&mut tag.as_ref().to_vec());
+
+    writer.write(service_req.as_slice());
+    writer.flush()?;
+
+    
     Ok(())
 }
