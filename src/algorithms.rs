@@ -1,3 +1,5 @@
+// Algorithms accepted by the client
+
 // Key Exchange Method Names
 pub const KEY_EXCHANGE_ALGORITHMS: &str = "curve25519-sha256";
 

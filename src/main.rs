@@ -4,6 +4,8 @@ use std::net::IpAddr;
 mod algorithms;
 mod numbers;
 mod connection;
+mod crypto;
+mod session;
 
 #[derive(Clap)]
 struct Opts {
