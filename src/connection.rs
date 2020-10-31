@@ -20,24 +20,7 @@ use aes_ctr::cipher::{
 
 use aes_ctr::cipher::generic_array::typenum::{U16, U32};
 
-use crate::{numbers, algorithms, crypto, session};
-
-pub fn process_data(data: &mut Vec<u8>) {
-    let mut padding = 8 - (data.len() as u32 + 5) % 8;
-
-    if padding < 4 { padding += 8 }
-
-    let data_len = ((data.len() + 1 + padding as usize) as u32).to_be_bytes().to_vec();
-
-    let mut i = 0;
-    for b in data_len.iter() {
-        data.insert(i, *b);
-        i += 1;
-    }
-
-    data.insert(i, padding as u8);
-    data.append(&mut vec![0; padding as usize]);
-}
+use crate::{constants, algorithms, crypto, session};
 
 
 pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
@@ -47,8 +30,10 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     println!("Server version: {:?}", server_protocol.trim());
 
-    let protocol_string = "SSH-2.0-Simple_Rust_Client_1.0\r\n";
-    session.write_line(protocol_string)?;
+    let mut protocol_string = constants::Strings::CLIENT_VERSION.to_string();
+    protocol_string.push_str("\r\n");
+
+    session.write_line(&protocol_string)?;
 
     let mut received_kex: Vec<u8> = session.read_from_server();
 
@@ -79,7 +64,7 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     let cookie: [u8; 16] = csprng.gen();
   
-    ciphers.push(numbers::Message::SSH_MSG_KEXINIT);
+    ciphers.push(constants::Message::SSH_MSG_KEXINIT);
     ciphers.append(&mut cookie.to_vec());
     ciphers.append(&mut (algorithms::KEY_EXCHANGE_ALGORITHMS.len() as u32).to_be_bytes().to_vec());
     ciphers.append(&mut algorithms::KEY_EXCHANGE_ALGORITHMS.as_bytes().to_vec());
@@ -99,7 +84,7 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     ciphers.append(&mut algorithms::COMPRESSION_ALGORITHMS.as_bytes().to_vec());
     ciphers.append(&mut vec![0;13]);
 
-    process_data(&mut ciphers);
+    session.pad_data(&mut ciphers);
     session.write_to_server(&ciphers);
 
     ///////////////////////////////////////// Send KEXINIT response
@@ -109,11 +94,11 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     let pub_key = client_public.as_bytes();
 
     let mut key_exchange: Vec<u8> = Vec::new();
-    key_exchange.push(numbers::Message::SSH_MSG_KEX_ECDH_INIT);
+    key_exchange.push(constants::Message::SSH_MSG_KEX_ECDH_INIT);
     key_exchange.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
     key_exchange.append(&mut pub_key.to_vec());
 
-    process_data(&mut key_exchange);
+    session.pad_data(&mut key_exchange);
     session.write_to_server(&key_exchange);
 
     ////////////////////////////////// Generate Shared K
@@ -150,7 +135,7 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     let mut v_c: Vec<u8> = Vec::new();
     v_c.append(&mut (30 as u32).to_be_bytes().to_vec());
-    v_c.append(&mut "SSH-2.0-Simple_Rust_Client_1.0".as_bytes().to_vec());
+    v_c.append(&mut constants::Strings::CLIENT_VERSION.as_bytes().to_vec());
 
     let mut v_s: Vec<u8> = Vec::new();
     v_s.append(&mut (39 as u32).to_be_bytes().to_vec());
@@ -210,9 +195,9 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     ///////////////////////////////// NEW_KEYS
 
     let mut new_keys: Vec<u8> = Vec::new();
-    new_keys.push(numbers::Message::SSH_MSG_NEWKEYS);
+    new_keys.push(constants::Message::SSH_MSG_NEWKEYS);
 
-    process_data(&mut new_keys);
+    session.pad_data(&mut new_keys);
     session.write_to_server(&new_keys);
 
     /////////////////////////////////
@@ -222,11 +207,11 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     ////////////////////////////////
 
     let mut service_req: Vec<u8> = Vec::new();
-    service_req.push(numbers::Message::SSH_MSG_SERVICE_REQUEST);  
+    service_req.push(constants::Message::SSH_MSG_SERVICE_REQUEST);  
     service_req.append(&mut (12 as u32).to_be_bytes().to_vec());
-    service_req.append(&mut "ssh-userauth".as_bytes().to_vec());
+    service_req.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
-    process_data(&mut service_req);
+    session.pad_data(&mut service_req);
 
     let mut mac: Vec<u8> = Vec::new();
     mac.append(&mut (3 as u32).to_be_bytes().to_vec());

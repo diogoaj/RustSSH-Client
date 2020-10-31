@@ -2,7 +2,7 @@ use clap::Clap;
 use std::net::IpAddr;
 
 mod algorithms;
-mod numbers;
+mod constants;
 mod connection;
 mod crypto;
 mod session;

@@ -1,3 +1,11 @@
+pub struct Strings;
+
+#[allow(dead_code)]
+impl Strings {
+    pub const CLIENT_VERSION: &'static str = "SSH-2.0-Simple_Rust_Client_1.0";
+    pub const SSH_USERAUTH: &'static str = "ssh-userauth";
+}
+
 pub struct Message;
 
 #[allow(dead_code)]
