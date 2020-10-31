@@ -163,13 +163,13 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     k.append(&mut secret.as_bytes().to_vec());
 
     let mut i_c: Vec<u8> = Vec::new();
-    i_c.append(&mut (144 as u32).to_be_bytes().to_vec());
-    ciphers = ciphers[5..(ciphers.len() - 11)].to_vec();
+    ciphers = ciphers[5..(ciphers.len() - ciphers[4] as usize)].to_vec();
+    i_c.append(&mut (ciphers.len() as u32).to_be_bytes().to_vec());
     i_c.append(&mut ciphers);
 
     let mut i_s: Vec<u8> = Vec::new();
-    i_s.append(&mut (1041 as u32).to_be_bytes().to_vec());
-    received_kex = received_kex[5..(received_kex.len() - 10)].to_vec();
+    received_kex = received_kex[5..(received_kex.len() - received_kex[4] as usize)].to_vec();
+    i_s.append(&mut (received_kex.len() as u32).to_be_bytes().to_vec());
     i_s.append(&mut received_kex);
     
 
@@ -208,18 +208,17 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     let mut service_req: Vec<u8> = Vec::new();
     service_req.push(constants::Message::SSH_MSG_SERVICE_REQUEST);  
-    service_req.append(&mut (12 as u32).to_be_bytes().to_vec());
+    service_req.append(&mut (constants::Strings::SSH_USERAUTH.len() as u32).to_be_bytes().to_vec());
     service_req.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
     session.pad_data(&mut service_req);
 
     let mut mac: Vec<u8> = Vec::new();
-    mac.append(&mut (3 as u32).to_be_bytes().to_vec());
+    mac.append(&mut session.sequence_number.to_be_bytes().to_vec());
     mac.append(&mut service_req.clone());
 
     let key: &GenericArray<_, U32> = GenericArray::from_slice(&keys.encryption_key_client_to_server);
     let nonce: &GenericArray<_, U16> = GenericArray::from_slice(&keys.initial_iv_client_to_server[0..16]);
-
     let mut cipher = Aes256Ctr::new(&key, &nonce);
 
     cipher.apply_keystream(service_req.as_mut_slice());
@@ -227,16 +226,14 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     let int_key = hmac::Key::new(hmac::HMAC_SHA256, &keys.integrity_key_client_to_server);
     let tag = hmac::sign(&int_key, &mac.as_slice());
 
-
     service_req.append(&mut tag.as_ref().to_vec());
-
     session.write_to_server(&service_req);
 
     /////////////////// Decryption example
 
     let mut dec_response: Vec<u8> = session.read_from_server();
 
-    println!("{:x?}", dec_response);
+    //println!("{:x?}", dec_response);
 
     let key: &GenericArray<_, U32> = GenericArray::from_slice(&keys.encryption_key_server_to_client);
     let nonce: &GenericArray<_, U16> = GenericArray::from_slice(&keys.initial_iv_server_to_client[0..16]);
@@ -244,7 +241,7 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
 
     cipher.apply_keystream(dec_response.as_mut_slice()); 
 
-    println!("{:x?}", dec_response);
+    //println!("{:x?}", dec_response);
 
     Ok(())
 }

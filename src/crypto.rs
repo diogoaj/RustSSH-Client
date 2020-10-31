@@ -26,6 +26,21 @@ impl Keys {
         }      
     } 
 
+    pub fn rekey(&mut self, k: &mut Vec<u8>, h: &mut Vec<u8>, session_id: &mut Vec<u8>) {
+        let mut keys: Vec<Vec<u8>> = Vec::new();
+
+        for index in 65..71 {
+            keys.push(Keys::derive_key(&digest::SHA256, k, h, index, session_id));
+        }
+
+        self.initial_iv_client_to_server = keys[0].clone();
+        self.initial_iv_server_to_client = keys[1].clone();
+        self.encryption_key_client_to_server = keys[2].clone();
+        self.encryption_key_server_to_client = keys[3].clone();
+        self.integrity_key_client_to_server = keys[4].clone();
+        self.integrity_key_server_to_client = keys[5].clone();
+    }
+
     fn derive_key(algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>, key_char: u8, session_id: &mut Vec<u8>) -> Vec<u8> {
         let mut key: Vec<u8> = Vec::new();
         key.append(&mut k.clone());
