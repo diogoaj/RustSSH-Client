@@ -7,7 +7,7 @@ pub const KEY_EXCHANGE_ALGORITHMS: &str = "curve25519-sha256";
 pub const PUBLIC_KEY_ALGORITHMS: &str = "ssh-ed25519";
 
 // Encryption Algorithm Names
-pub const ENCRYPTION_ALGORITHMS: &str = "aes256-ctr";
+pub const ENCRYPTION_ALGORITHMS: &str = "chacha20-poly1305@openssh.com";
 
 // MAC Algorithm Names
 pub const MAC_ALGORITHMS: &str = "hmac-sha2-256";

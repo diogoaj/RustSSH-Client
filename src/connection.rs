@@ -1,7 +1,6 @@
 
 use std::net::IpAddr;
 use std::str;
-
 use rand::Rng;
 use rand::rngs::OsRng;
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -9,16 +8,6 @@ use ed25519_dalek::*;
 use ring::{aead::chacha20_poly1305_openssh, digest, hmac};
 use core::convert::TryInto;
 use std::convert::From;
-
-use aes_ctr::Aes256Ctr;
-use aes_ctr::cipher::{
-    generic_array::GenericArray,
-    stream::{
-        NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek
-    }
-};
-
-use aes_ctr::cipher::generic_array::typenum::{U16, U32};
 
 use crate::{constants, algorithms, crypto, session};
 
@@ -84,7 +73,7 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     ciphers.append(&mut algorithms::COMPRESSION_ALGORITHMS.as_bytes().to_vec());
     ciphers.append(&mut vec![0;13]);
 
-    session.pad_data(&mut ciphers);
+    session.pad_data(&mut ciphers, false);
     session.write_to_server(&ciphers);
 
     ///////////////////////////////////////// Send KEXINIT response
@@ -98,7 +87,7 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     key_exchange.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
     key_exchange.append(&mut pub_key.to_vec());
 
-    session.pad_data(&mut key_exchange);
+    session.pad_data(&mut key_exchange, false);
     session.write_to_server(&key_exchange);
 
     ////////////////////////////////// Generate Shared K
@@ -197,12 +186,12 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     let mut new_keys: Vec<u8> = Vec::new();
     new_keys.push(constants::Message::SSH_MSG_NEWKEYS);
 
-    session.pad_data(&mut new_keys);
+    session.pad_data(&mut new_keys, false);
     session.write_to_server(&new_keys);
 
     /////////////////////////////////
 
-    let keys = crypto::Keys::new(&mut k, &mut exchange_hash);
+    let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut exchange_hash);
 
     ////////////////////////////////
 
@@ -211,37 +200,37 @@ pub fn ssh_debug(host: IpAddr, port: u16) -> std::io::Result<()>{
     service_req.append(&mut (constants::Strings::SSH_USERAUTH.len() as u32).to_be_bytes().to_vec());
     service_req.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
-    session.pad_data(&mut service_req);
+    session.pad_data(&mut service_req, true);
 
-    let mut mac: Vec<u8> = Vec::new();
-    mac.append(&mut session.sequence_number.to_be_bytes().to_vec());
-    mac.append(&mut service_req.clone());
+    let mut sealing_key_data: [u8;64] = [0;64];
+    let mut opening_key_data: [u8;64] = [0;64];
+    let mut tag: [u8;16] = [0;16];
+    sealing_key_data.copy_from_slice(keys.encryption_key_client_to_server.as_slice());
+    opening_key_data.copy_from_slice(keys.encryption_key_server_to_client.as_slice());
+    let sealing_key = chacha20_poly1305_openssh::SealingKey::new(&sealing_key_data);
+    let opening_key = chacha20_poly1305_openssh::OpeningKey::new(&opening_key_data);
+    sealing_key.seal_in_place(session.sequence_number, &mut service_req, &mut tag);
 
-    let key: &GenericArray<_, U32> = GenericArray::from_slice(&keys.encryption_key_client_to_server);
-    let nonce: &GenericArray<_, U16> = GenericArray::from_slice(&keys.initial_iv_client_to_server[0..16]);
-    let mut cipher = Aes256Ctr::new(&key, &nonce);
-
-    cipher.apply_keystream(service_req.as_mut_slice());
-
-    let int_key = hmac::Key::new(hmac::HMAC_SHA256, &keys.integrity_key_client_to_server);
-    let tag = hmac::sign(&int_key, &mac.as_slice());
-
-    service_req.append(&mut tag.as_ref().to_vec());
+    service_req.append(&mut tag.to_vec());
+    
     session.write_to_server(&service_req);
+    
 
-    /////////////////// Decryption example
+    let mut dec_response = session.read_from_server();
 
-    let mut dec_response: Vec<u8> = session.read_from_server();
+    let mut tag: [u8;16] = [0;16];
+    tag.copy_from_slice(&dec_response[28..]);
 
-    //println!("{:x?}", dec_response);
+    let mut dec_response_length: [u8;4] = [0;4];
+    dec_response_length.copy_from_slice(&dec_response[0..4]);
 
-    let key: &GenericArray<_, U32> = GenericArray::from_slice(&keys.encryption_key_server_to_client);
-    let nonce: &GenericArray<_, U16> = GenericArray::from_slice(&keys.initial_iv_server_to_client[0..16]);
-    let mut cipher = Aes256Ctr::new(&key, &nonce);
+    let mut dec_response_length = 
+    u32::from_be_bytes(opening_key.decrypt_packet_length(session.sequence_number-1, dec_response_length));
 
-    cipher.apply_keystream(dec_response.as_mut_slice()); 
-
-    //println!("{:x?}", dec_response);
-
+    let mut response_dec = 
+    opening_key.open_in_place(session.sequence_number-1, &mut dec_response[0..28], &mut tag).unwrap();
+    
+    println!("{:?}", response_dec);
+    
     Ok(())
 }

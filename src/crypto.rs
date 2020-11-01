@@ -9,28 +9,32 @@ pub struct Keys {
 }
 
 impl Keys {
-    pub fn new(k: &mut Vec<u8>, h: &mut Vec<u8>) -> Keys {
+    pub fn new(algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>) -> Keys {
         let mut keys: Vec<Vec<u8>> = Vec::new();
 
         for index in 65..71 {
-            keys.push(Keys::derive_key(&digest::SHA256, k, h, index, &mut h.clone()));
+            keys.push(Keys::derive_key(algorithm, k, h, index, &mut h.clone()));
         }
     
-        Keys {
+        let mut keys = Keys {
             initial_iv_client_to_server: keys[0].clone(),
             initial_iv_server_to_client: keys[1].clone(),
             encryption_key_client_to_server: keys[2].clone(),
             encryption_key_server_to_client: keys[3].clone(),
             integrity_key_client_to_server: keys[4].clone(),
             integrity_key_server_to_client: keys[5].clone()
-        }      
+        };
+
+        keys.extend_keys(algorithm, k, h);
+
+        keys
     } 
 
-    pub fn rekey(&mut self, k: &mut Vec<u8>, h: &mut Vec<u8>, session_id: &mut Vec<u8>) {
+    pub fn rekey(&mut self, algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>, session_id: &mut Vec<u8>) {
         let mut keys: Vec<Vec<u8>> = Vec::new();
 
         for index in 65..71 {
-            keys.push(Keys::derive_key(&digest::SHA256, k, h, index, session_id));
+            keys.push(Keys::derive_key(algorithm, k, h, index, session_id));
         }
 
         self.initial_iv_client_to_server = keys[0].clone();
@@ -39,6 +43,8 @@ impl Keys {
         self.encryption_key_server_to_client = keys[3].clone();
         self.integrity_key_client_to_server = keys[4].clone();
         self.integrity_key_server_to_client = keys[5].clone();
+
+        self.extend_keys(algorithm, k, h);
     }
 
     fn derive_key(algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>, key_char: u8, session_id: &mut Vec<u8>) -> Vec<u8> {
@@ -49,6 +55,24 @@ impl Keys {
         key.append(&mut session_id.clone());
     
         digest::digest(algorithm, key.as_slice()).as_ref().to_vec()
+    }
+
+    fn extend_key(&self, algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>, key: Vec<u8>) -> Vec<u8>{
+        let mut hash: Vec<u8> = Vec::new();
+        hash.append(&mut k.clone());
+        hash.append(&mut h.clone());
+        hash.append(&mut key.clone());
+
+        digest::digest(algorithm, hash.as_slice()).as_ref().to_vec()
+    }
+
+    fn extend_keys(&mut self, algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>) {
+        self.initial_iv_client_to_server.append(&mut self.extend_key(algorithm, k, h, self.initial_iv_client_to_server.clone()));
+        self.initial_iv_server_to_client.append(&mut self.extend_key(algorithm, k, h, self.initial_iv_server_to_client.clone()));
+        self.encryption_key_client_to_server.append(&mut self.extend_key(algorithm, k, h, self.encryption_key_client_to_server.clone()));
+        self.encryption_key_server_to_client.append(&mut self.extend_key(algorithm, k, h, self.encryption_key_server_to_client.clone()));
+        self.integrity_key_client_to_server.append(&mut self.extend_key(algorithm, k, h, self.integrity_key_client_to_server.clone()));
+        self.integrity_key_server_to_client.append(&mut self.extend_key(algorithm, k, h, self.integrity_key_server_to_client.clone()));
     }
 }  
 

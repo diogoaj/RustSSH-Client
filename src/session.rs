@@ -5,7 +5,8 @@ pub struct Session {
     reader: Cell<BufReader<TcpStream>>,
     writer: Cell<BufWriter<TcpStream>>,
     pub sequence_number: u32,
-    pub session_id: Vec<u8>
+    pub session_id: Vec<u8>,
+    pub data_sent: u32,
 }
 
 impl Session {
@@ -17,6 +18,7 @@ impl Session {
             writer: Cell::new(BufWriter::new(stream)),
             sequence_number: 0,
             session_id: Vec::new(),
+            data_sent: 0
         })
     }
 
@@ -38,7 +40,7 @@ impl Session {
 
     pub fn read_from_server(&mut self) -> Vec<u8> {
         let r = self.reader.get_mut();
-        let mut received_data: Vec<u8> = r.fill_buf().unwrap().to_vec();
+        let received_data: Vec<u8> = r.fill_buf().unwrap().to_vec();
 
         r.consume(received_data.len());
         received_data
@@ -52,10 +54,14 @@ impl Session {
         w.flush()
     }
 
-    pub fn pad_data(&self, data: &mut Vec<u8>) {
-        let mut padding = 8 - (data.len() as u32 + 5) % 8;
-        if padding < 4 { padding += 8 }
-    
+    pub fn pad_data(&self, data: &mut Vec<u8>, enc: bool) {
+        let mut padding = match enc {
+            true => 8 - (data.len() as u32 + 1) % 8,
+            false => 16 - (data.len() as u32 + 5) % 16
+        };
+
+        if padding < 4 { padding += 4};
+
         data.append(&mut vec![0; padding as usize]);
     
         let data_len = ((data.len() + 1 as usize) as u32).to_be_bytes().to_vec();
