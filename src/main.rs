@@ -3,9 +3,10 @@ use std::net::IpAddr;
 
 mod algorithms;
 mod constants;
-mod connection;
+mod ssh;
 mod crypto;
 mod session;
+mod kex;
 
 #[derive(Clap)]
 struct Opts {
@@ -15,6 +16,7 @@ struct Opts {
 
 fn main() -> std::io::Result<()>{
     let opts: Opts = Opts::parse();
+    let mut ssh_client = ssh::SSH::new(opts.ip, opts.port);
 
-    connection::ssh_debug(opts.ip, opts.port)
+    ssh_client.ssh_debug()
 }

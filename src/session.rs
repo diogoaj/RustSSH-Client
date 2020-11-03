@@ -1,9 +1,11 @@
 use std::{cell::Cell, net::{SocketAddr, TcpStream, IpAddr}};
 use std::io::{BufReader, BufWriter, Result, prelude::*};
+use rand::rngs::OsRng;
 
 pub struct Session {
     reader: Cell<BufReader<TcpStream>>,
     writer: Cell<BufWriter<TcpStream>>,
+    pub csprng: OsRng, 
     pub sequence_number: u32,
     pub session_id: Vec<u8>,
     pub data_sent: u32,
@@ -16,6 +18,7 @@ impl Session {
         Ok(Session {
             reader: Cell::new(BufReader::new(stream.try_clone()?)),
             writer: Cell::new(BufWriter::new(stream)),
+            csprng: OsRng{},
             sequence_number: 0,
             session_id: Vec::new(),
             data_sent: 0

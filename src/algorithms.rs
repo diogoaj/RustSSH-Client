@@ -1,5 +1,14 @@
 // Algorithms accepted by the client
 
+pub const ALGORITHMS: [&str;8] = [KEY_EXCHANGE_ALGORITHMS, 
+                                  PUBLIC_KEY_ALGORITHMS, 
+                                  ENCRYPTION_ALGORITHMS, 
+                                  ENCRYPTION_ALGORITHMS,
+                                  MAC_ALGORITHMS,
+                                  MAC_ALGORITHMS,
+                                  COMPRESSION_ALGORITHMS,
+                                  COMPRESSION_ALGORITHMS];
+
 // Key Exchange Method Names
 pub const KEY_EXCHANGE_ALGORITHMS: &str = "curve25519-sha256";
 
