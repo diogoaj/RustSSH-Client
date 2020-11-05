@@ -1,8 +1,9 @@
 use crate::{session::Session, constants};
 
-use x25519_dalek::{StaticSecret, EphemeralSecret, PublicKey};
+use x25519_dalek::{StaticSecret, SharedSecret, PublicKey};
 use ed25519_dalek::*;
 use std::convert::From;
+
 
 pub struct Kex {
    pub private_key: StaticSecret,
@@ -16,12 +17,7 @@ impl Kex{
         }
     }
 
-    pub fn x25519_kex(self, client: &mut Session) -> Vec<u8>{
-        self.send_client_public_key(client);
-        self.generate_shared_secret(client)
-    }
-
-    pub fn send_client_public_key(&self, client: &mut Session) {
+    pub fn generate_public_key(&self) -> Vec<u8>{
         let public_key = PublicKey::from(&self.private_key);
         let pub_key = public_key.as_bytes();
 
@@ -30,11 +26,12 @@ impl Kex{
         key_exchange.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
         key_exchange.append(&mut pub_key.to_vec());
 
-        client.pad_data(&mut key_exchange, false);
-        client.write_to_server(&key_exchange);
+        key_exchange
+ 
     }
 
-    fn generate_shared_secret(self, client: &mut Session) -> Vec<u8>{
-       Vec::new()
+    pub fn generate_shared_secret(&self, f: [u8;32]) -> SharedSecret{
+        let server_pub = PublicKey::from(f);
+        self.private_key.diffie_hellman(&server_pub)
     }
 }

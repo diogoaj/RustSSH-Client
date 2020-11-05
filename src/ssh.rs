@@ -6,7 +6,7 @@ use ed25519_dalek::*;
 use ring::{aead::chacha20_poly1305_openssh, digest};
 use core::convert::TryInto;
 
-use crate::{constants, algorithms, crypto, session::Session, kex};
+use crate::{constants, algorithms, crypto, session::Session, kex, ed25519};
 
 pub struct SSH{
     client_session: Session,
@@ -33,7 +33,7 @@ impl SSH {
 
     fn algorithm_exchange(&mut self) {
         let received_ciphers: Vec<u8> = self.client_session.read_from_server();
-
+        
         let _size = &received_ciphers[0..4];
         let _pad = &received_ciphers[5];
         let _code = &received_ciphers[6];
@@ -63,7 +63,7 @@ impl SSH {
             ciphers.append(&mut (algorithm.as_bytes().to_vec()));
         }
 
-        ciphers.append(&mut vec![0;13]); // Last bytes 
+        ciphers.append(&mut vec![0;13]); // Last bytes - 0000 0000 0000 0
 
         self.client_session.pad_data(&mut ciphers, false);
         self.client_session.write_to_server(&ciphers).unwrap();
@@ -72,9 +72,6 @@ impl SSH {
         self.received_ciphers = received_ciphers;
     }
 
-    fn kex() {
-
-    }
 
     pub fn ssh_debug(&mut self) -> std::io::Result<()>{
         let server_protocol_string = self.protocol_string_exchange(constants::Strings::CLIENT_VERSION);
@@ -83,7 +80,10 @@ impl SSH {
         self.algorithm_exchange();
 
         let kex = kex::Kex::new(&mut self.client_session);
-        kex.send_client_public_key(&mut self.client_session);
+        let mut client_public_key = kex.generate_public_key();
+        let mut e = client_public_key.clone();
+        self.client_session.pad_data(&mut client_public_key, false);
+        self.client_session.write_to_server(&client_public_key);
         
         ////////////////////////////////// Generate Shared K
 
@@ -98,7 +98,9 @@ impl SSH {
 
         let host_key_ed25519 = ed25519_dalek::PublicKey::from_bytes(host_key).unwrap();
 
-        let f = &received_ecdh[((14 + key_size) as usize)..((14 + 32 + key_size) as usize)];
+        let f = &received_ecdh[((10 + key_size) as usize)..((14 + 32 + key_size) as usize)];
+
+        println!("{:x?}", f.to_vec());
 
         let index = (14 + 32 + key_size) as usize;
         let alg_size = &received_ecdh[index..index+4];
@@ -109,43 +111,23 @@ impl SSH {
         sig_fixed.copy_from_slice(sig);
         let ed25519_signature = ed25519_dalek::Signature::new(sig_fixed);
 
-        let f_fixed: [u8;32] = f.try_into().unwrap();
-
-        let server_pub = PublicKey::from(f_fixed);
-        let secret = kex.private_key.diffie_hellman(&server_pub);
+        let f_fixed: [u8;32] = f[4..].try_into().unwrap();
+        let secret = kex.generate_shared_secret(f_fixed);
         
 
         ///////////////////////////// Create Exchange Hash
 
         let mut v_c: Vec<u8> = Vec::new();
-        v_c.append(&mut (30 as u32).to_be_bytes().to_vec());
+        v_c.append(&mut (constants::Strings::CLIENT_VERSION.len() as u32).to_be_bytes().to_vec());
         v_c.append(&mut constants::Strings::CLIENT_VERSION.as_bytes().to_vec());
-
+        
         let mut v_s: Vec<u8> = Vec::new();
-        v_s.append(&mut (39 as u32).to_be_bytes().to_vec());
+        v_s.append(&mut (server_protocol_string.trim().len() as u32).to_be_bytes().to_vec());
         v_s.append(&mut server_protocol_string.trim().as_bytes().to_vec());
 
         let mut k_s = received_ecdh[6..(10 + key_size) as usize].to_vec();
 
-        let mut e: Vec<u8> = Vec::new();
-        e.append(&mut (32 as u32).to_be_bytes().to_vec());
-        let client_public = PublicKey::from(&kex.private_key);
-        e.append(&mut client_public.as_bytes().to_vec());
-
-        let mut f: Vec<u8> = Vec::new();
-        f.append(&mut (32 as u32).to_be_bytes().to_vec());
-        f.append(&mut f_fixed.to_vec());
-
-        // mpint logic
-        let mut k: Vec<u8> = Vec::new();
-        if secret.as_bytes()[0] & 128 == 128 {
-            k.append(&mut 33u32.to_be_bytes().to_vec());
-            k.push(0);
-        } else {
-            k.append(&mut 32u32.to_be_bytes().to_vec());
-        };
-
-        k.append(&mut secret.as_bytes().to_vec());
+        let mut k: Vec<u8> = self.client_session.mpint(secret.as_bytes());
 
         let mut i_c: Vec<u8> = Vec::new();
         self.ciphers = self.ciphers[5..(self.ciphers.len() - self.ciphers[4] as usize)].to_vec();
@@ -165,8 +147,8 @@ impl SSH {
             &mut i_c, 
             &mut i_s, 
             &mut k_s, 
-            &mut e, 
-            &mut f, 
+            &mut e[1..].to_vec(), 
+            &mut f.to_vec(), 
             &mut k.clone()
         );
 
@@ -175,7 +157,7 @@ impl SSH {
         // Host Key check was skipped - TODO
         // Checking server's signature
         println!("Signature Check: {:?}", host_key_ed25519.verify(exchange_hash.as_slice(), 
-                                                                &ed25519_signature).is_ok());
+                                                                  &ed25519_signature).is_ok());
 
         ///////////////////////////////// NEW_KEYS
 
