@@ -1,7 +1,6 @@
 use crate::{session::Session, constants};
 
 use x25519_dalek::{StaticSecret, SharedSecret, PublicKey};
-use ed25519_dalek::*;
 use std::convert::From;
 
 

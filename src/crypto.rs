@@ -1,5 +1,6 @@
 use ring::{aead::chacha20_poly1305_openssh, digest};
 use crate::session::Session;
+use core::convert::TryInto;
 
 pub struct SessionKeys {
     pub client_key: chacha20_poly1305_openssh::SealingKey,
@@ -21,33 +22,57 @@ impl SessionKeys {
 
     pub fn seal_packet_and_write_to_server(&self, client_session: &mut Session, packet: &mut Vec<u8>){
         let mut tag: [u8;16] = [0;16];
-        self.client_key.seal_in_place(client_session.sequence_number, packet, &mut tag);
+        self.client_key.seal_in_place(client_session.client_sequence_number, packet, &mut tag);
 
         packet.append(&mut tag.to_vec());
         client_session.write_to_server(&packet).unwrap();
     }
 
-    pub fn unseal_incoming_packet(&self, client_session: &mut Session) -> Vec<u8>{
-        let mut enc_respnse = client_session.read_from_server();
+    pub fn unseal_incoming_packet(&self, client_session: &mut Session){
+        let mut enc_response = client_session.read_from_server();
+        let mut enc_response = enc_response.as_mut_slice();
 
-        let mut tag: [u8;16] = [0;16];
-        tag.copy_from_slice(&enc_respnse[(enc_respnse.len() - 16) as usize..]);
+        loop {
+            println!("Encrypted packet: {:x?}", enc_response);
 
-        let mut enc_response_len: [u8;4] = [0;4];
-        enc_response_len.copy_from_slice(&enc_respnse[0..4]);
+            let (enc_response_len_slice, enc_response_slice) = enc_response.split_at_mut(4);
+            enc_response = enc_response_slice;
 
-        let dec_response_len = u32::from_be_bytes(
-            self.server_key.decrypt_packet_length(
-                client_session.sequence_number-1, 
-                enc_response_len)
-            );
+            let mut enc_response_len: [u8;4] = [0;4];
+            enc_response_len.copy_from_slice(enc_response_len_slice);
 
-        let dec_response = self.server_key.open_in_place(
-            client_session.sequence_number-1, 
-            &mut enc_respnse[0..(dec_response_len+4) as usize], 
-            &mut tag).unwrap();
+            let dec_response_len = u32::from_be_bytes(
+                self.server_key.decrypt_packet_length(
+                    client_session.server_sequence_number, 
+                    enc_response_len)
+                );
 
-        dec_response.to_vec()
+            println!("Length {:x?}", dec_response_len);
+
+            let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
+            enc_response = enc_response_slice;
+            let (tag_slice,  enc_response_slice) = enc_response.split_at_mut(16);
+            enc_response = enc_response_slice;
+
+            let mut tag: [u8;16] = [0;16];
+            tag.copy_from_slice(tag_slice);
+
+            let mut ciphertext_in = [enc_response_len_slice, enc_payload].concat();
+            let ciphertext_in = ciphertext_in.as_mut_slice();
+
+            let dec_response = self.server_key.open_in_place(
+                client_session.server_sequence_number, 
+                ciphertext_in, 
+                &mut tag).unwrap();
+
+            println!("Decrypted packet: {:x?}", dec_response);
+      
+            if enc_response.len() == 0 {
+                break;
+            } else {
+                client_session.server_sequence_number += 1;
+            }
+        }
     }
 }
 

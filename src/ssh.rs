@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::str;
 use rand::Rng;
 use ed25519_dalek::*;
-use ring::{aead::chacha20_poly1305_openssh, digest};
+use ring::digest;
 use core::convert::TryInto;
 
 use crate::{constants, algorithms, crypto, session::Session, kex};
@@ -155,8 +155,83 @@ impl SSH {
         self.client_session.write_to_server(&new_keys).unwrap();
     }
 
+    fn service_request_message(&mut self, session_keys: &crypto::SessionKeys){
+        let mut service_request: Vec<u8> = Vec::new();
+        service_request.push(constants::Message::SSH_MSG_SERVICE_REQUEST);  
+        service_request.append(&mut (constants::Strings::SSH_USERAUTH.len() as u32).to_be_bytes().to_vec());
+        service_request.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
-    pub fn ssh_debug(&mut self) -> std::io::Result<()>{
+        self.client_session.pad_data(&mut service_request, true);
+
+        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut service_request);
+        session_keys.unseal_incoming_packet(&mut self.client_session);
+    }
+
+    fn authentication_request(&mut self, session_keys: &crypto::SessionKeys){
+        let mut auth_request: Vec<u8> = Vec::new();
+        auth_request.push(constants::Message::SSH_MSG_USERAUTH_REQUEST);  
+        auth_request.append(&mut (9 as u32).to_be_bytes().to_vec());
+        auth_request.append(&mut "READ_THIS_FROM_USER".as_bytes().to_vec());
+        auth_request.append(&mut (constants::Strings::SSH_CONNECTION.len() as u32).to_be_bytes().to_vec());
+        auth_request.append(&mut constants::Strings::SSH_CONNECTION.as_bytes().to_vec());
+        auth_request.append(&mut (4 as u32).to_be_bytes().to_vec());
+        auth_request.append(&mut "none".as_bytes().to_vec());
+
+        self.client_session.pad_data(&mut auth_request, true);
+
+        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut auth_request);
+        session_keys.unseal_incoming_packet(&mut self.client_session);
+    }
+
+    fn password_authentication(&mut self, session_keys: &crypto::SessionKeys){
+        let mut password_auth: Vec<u8> = Vec::new();
+        password_auth.push(constants::Message::SSH_MSG_USERAUTH_REQUEST);  
+        password_auth.append(&mut (99 as u32).to_be_bytes().to_vec());
+        password_auth.append(&mut "READ_THIS_FROM_USER".as_bytes().to_vec());
+        password_auth.append(&mut (constants::Strings::SSH_CONNECTION.len() as u32).to_be_bytes().to_vec());
+        password_auth.append(&mut constants::Strings::SSH_CONNECTION.as_bytes().to_vec());
+        password_auth.append(&mut (8 as u32).to_be_bytes().to_vec());
+        password_auth.append(&mut "password".as_bytes().to_vec());
+        password_auth.push(0);
+        password_auth.append(&mut (99 as u32).to_be_bytes().to_vec());
+        password_auth.append(&mut "READ_THIS_FROM_USER".as_bytes().to_vec());
+
+        self.client_session.pad_data(&mut password_auth, true);
+        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut password_auth);
+        session_keys.unseal_incoming_packet(&mut self.client_session);
+    }
+
+    fn open_channel(&mut self, session_keys: &crypto::SessionKeys) {
+        let mut open_request: Vec<u8> = Vec::new();
+        open_request.push(constants::Message::SSH_MSG_CHANNEL_OPEN);
+        open_request.append(&mut (constants::Strings::SESSION_STRING.len() as u32).to_be_bytes().to_vec());
+        open_request.append(&mut constants::Strings::SESSION_STRING.as_bytes().to_vec());
+        open_request.append(&mut (1 as u32).to_be_bytes().to_vec());
+        open_request.append(&mut (0 as u32).to_be_bytes().to_vec());
+        open_request.append(&mut (32768 as u32).to_be_bytes().to_vec());
+
+        self.client_session.pad_data(&mut open_request, true);
+        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut open_request);
+        session_keys.unseal_incoming_packet(&mut self.client_session);
+        session_keys.unseal_incoming_packet(&mut self.client_session);
+    }
+
+    fn channel_request(&mut self, session_keys: &crypto::SessionKeys) {
+        let mut channel_request: Vec<u8> = Vec::new();
+        channel_request.push(constants::Message::SSH_MSG_CHANNEL_REQUEST);
+        channel_request.append(&mut (0 as u32).to_be_bytes().to_vec());
+        channel_request.append(&mut (5 as u32).to_be_bytes().to_vec());
+        channel_request.append(&mut "shell".as_bytes().to_vec());
+        channel_request.push(1);
+
+        self.client_session.pad_data(&mut channel_request, true);
+        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut channel_request);
+        session_keys.unseal_incoming_packet(&mut self.client_session);
+    }
+
+
+
+    pub fn ssh_protocol(&mut self) -> std::io::Result<()>{
         // Protocol String Exchange 
         let server_protocol_string = self.protocol_string_exchange(constants::Strings::CLIENT_VERSION);
         println!("[+] Server version: {}", server_protocol_string.trim());
@@ -191,24 +266,23 @@ impl SSH {
         
         // NEW_KEYS 
         self.new_keys_message();
- 
+
+        // ----- Everything is ecrypted from here -----
         // Derive Keys 
         let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut self.client_session.session_id);
-
-        // SERVICE REQUEST 
-        let mut service_req: Vec<u8> = Vec::new();
-        service_req.push(constants::Message::SSH_MSG_SERVICE_REQUEST);  
-        service_req.append(&mut (constants::Strings::SSH_USERAUTH.len() as u32).to_be_bytes().to_vec());
-        service_req.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
-
-        self.client_session.pad_data(&mut service_req, true);
-
         let session_keys = crypto::SessionKeys::new(keys);
 
-        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut service_req);
+        // SERVICE REQUEST 
+        self.service_request_message(&session_keys);
 
-        println!("{:x?}", session_keys.unseal_incoming_packet(&mut self.client_session));
-  
+        // Authentication
+
+        self.password_authentication(&session_keys);
+    
+        // Open Channel
+
+        self.open_channel(&session_keys);
+        self.channel_request(&session_keys);
 
         Ok(())
     }

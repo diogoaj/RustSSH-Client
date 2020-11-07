@@ -8,7 +8,8 @@ pub struct Session {
     reader: Cell<BufReader<TcpStream>>,
     writer: Cell<BufWriter<TcpStream>>,
     pub csprng: OsRng, 
-    pub sequence_number: u32,
+    pub client_sequence_number: u32,
+    pub server_sequence_number: u32,
     pub session_id: Vec<u8>,
     pub data_sent: u32,
 }
@@ -21,7 +22,8 @@ impl Session {
             reader: Cell::new(BufReader::new(stream.try_clone()?)),
             writer: Cell::new(BufWriter::new(stream)),
             csprng: OsRng{},
-            sequence_number: 0,
+            client_sequence_number: 0,
+            server_sequence_number: 0,
             session_id: Vec::new(),
             data_sent: 0
         })
@@ -48,6 +50,7 @@ impl Session {
         let received_data: Vec<u8> = r.fill_buf().unwrap().to_vec();
 
         r.consume(received_data.len());
+        self.server_sequence_number += 1;
         received_data
     }
 
@@ -55,7 +58,7 @@ impl Session {
         let w = self.writer.get_mut();
 
         w.write(data.as_slice())?;
-        self.sequence_number += 1;
+        self.client_sequence_number += 1;
         w.flush()
     }
 

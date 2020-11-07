@@ -18,5 +18,5 @@ fn main() -> std::io::Result<()>{
     let opts: Opts = Opts::parse();
     let mut ssh_client = ssh::SSH::new(opts.ip, opts.port);
 
-    ssh_client.ssh_debug()
+    ssh_client.ssh_protocol()
 }
