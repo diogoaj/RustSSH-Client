@@ -1,6 +1,8 @@
 use std::{cell::Cell, net::{SocketAddr, TcpStream, IpAddr}};
 use std::io::{BufReader, BufWriter, Result, prelude::*};
+use ring::digest;
 use rand::rngs::OsRng;
+use crate::{constants, crypto};
 
 pub struct Session {
     reader: Cell<BufReader<TcpStream>>,
@@ -76,6 +78,48 @@ impl Session {
         }
     
         data.insert(i, padding as u8);
+    }
+
+    pub fn make_session_id(
+        &mut self, 
+        algorithm: &'static digest::Algorithm,
+        server_protocol_string: String,
+        ciphers: &mut Vec<u8>,
+        received_ciphers: &mut Vec<u8>,
+        k_s: &mut Vec<u8>,
+        e: &mut Vec<u8>,
+        f: &mut Vec<u8>,
+        k: &mut Vec<u8>) {
+
+        let mut v_c: Vec<u8> = Vec::new();
+        v_c.append(&mut (constants::Strings::CLIENT_VERSION.len() as u32).to_be_bytes().to_vec());
+        v_c.append(&mut constants::Strings::CLIENT_VERSION.as_bytes().to_vec());
+        
+        let mut v_s: Vec<u8> = Vec::new();
+        v_s.append(&mut (server_protocol_string.trim().len() as u32).to_be_bytes().to_vec());
+        v_s.append(&mut server_protocol_string.trim().as_bytes().to_vec());
+
+        let mut ciphers_no_size = ciphers[5..(ciphers.len() - ciphers[4] as usize)].to_vec();
+        let mut i_c: Vec<u8> = Vec::new();
+        i_c.append(&mut (ciphers_no_size.len() as u32).to_be_bytes().to_vec());
+        i_c.append(&mut ciphers_no_size);
+
+        let mut received_ciphers_no_size = received_ciphers[5..(received_ciphers.len() - received_ciphers[4] as usize)].to_vec();
+        let mut i_s: Vec<u8> = Vec::new();
+        i_s.append(&mut (received_ciphers_no_size.len() as u32).to_be_bytes().to_vec());
+        i_s.append(&mut received_ciphers_no_size);
+        
+        self.session_id = crypto::make_hash(
+            algorithm,
+            &mut v_c, 
+            &mut v_s, 
+            &mut i_c, 
+            &mut i_s, 
+            k_s, 
+            e, 
+            f,
+            k,
+        );
     }
 
     pub fn mpint(&self, int: &[u8]) -> Vec<u8> {

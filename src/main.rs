@@ -7,7 +7,6 @@ mod ssh;
 mod crypto;
 mod session;
 mod kex;
-mod ed25519;
 
 #[derive(Clap)]
 struct Opts {

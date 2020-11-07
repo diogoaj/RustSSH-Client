@@ -5,7 +5,7 @@ use ed25519_dalek::*;
 use ring::{aead::chacha20_poly1305_openssh, digest};
 use core::convert::TryInto;
 
-use crate::{constants, algorithms, crypto, session::Session, kex, ed25519};
+use crate::{constants, algorithms, crypto, session::Session, kex};
 
 pub struct SSH{
     client_session: Session,
@@ -92,7 +92,7 @@ impl SSH {
         let (_code, received_ecdh) = received_ecdh.split_at(1);
 
         let (key_size_slice, received_ecdh) = received_ecdh.split_at(4);
-        let key_size = u32::from_be_bytes(key_size_slice.try_into().unwrap());
+        //let key_size = u32::from_be_bytes(key_size_slice.try_into().unwrap());
 
         let (key_algorithm_size_slice, received_ecdh) = received_ecdh.split_at(4);
         let key_algorithm_size = u32::from_be_bytes(key_algorithm_size_slice.try_into().unwrap());
@@ -108,7 +108,7 @@ impl SSH {
 
         self.server_host_key = host_key.to_vec();
 
-        let mut k_s = [
+        let k_s = [
             key_size_slice, 
             key_algorithm_size_slice, 
             key_name, 
@@ -124,7 +124,7 @@ impl SSH {
         let (signature_length, received_ecdh) = received_ecdh.split_at(4);
         let signature_length = u32::from_be_bytes(signature_length.try_into().unwrap());
 
-        let (signature_data, received_ecdh) = received_ecdh.split_at(signature_length as usize);
+        let (signature_data, _) = received_ecdh.split_at(signature_length as usize);
         
         let (signature_algo_size, signature_data) = signature_data.split_at(4);
         let signature_algo_size = u32::from_be_bytes(signature_algo_size.try_into().unwrap());
@@ -145,75 +145,57 @@ impl SSH {
         let f = [f_size_slice, f.as_ref()].concat();
 
         (k_s, e.to_vec(), f, self.client_session.mpint(secret.as_bytes()))
-    } 
+    }
+    
+    fn new_keys_message(&mut self){
+        let mut new_keys: Vec<u8> = Vec::new();
+        new_keys.push(constants::Message::SSH_MSG_NEWKEYS);
+
+        self.client_session.pad_data(&mut new_keys, false);
+        self.client_session.write_to_server(&new_keys).unwrap();
+    }
 
 
     pub fn ssh_debug(&mut self) -> std::io::Result<()>{
+        // Protocol String Exchange 
         let server_protocol_string = self.protocol_string_exchange(constants::Strings::CLIENT_VERSION);
         println!("[+] Server version: {}", server_protocol_string.trim());
 
+        // Algorithm Exchange 
         self.algorithm_exchange();
 
+        // Key Exchange 
         let (mut k_s, mut e, mut f, mut k) = self.key_exchange();
-    
-        ///////////////////////////// Create Exchange Hash
 
-        let mut v_c: Vec<u8> = Vec::new();
-        v_c.append(&mut (constants::Strings::CLIENT_VERSION.len() as u32).to_be_bytes().to_vec());
-        v_c.append(&mut constants::Strings::CLIENT_VERSION.as_bytes().to_vec());
-        
-        let mut v_s: Vec<u8> = Vec::new();
-        v_s.append(&mut (server_protocol_string.trim().len() as u32).to_be_bytes().to_vec());
-        v_s.append(&mut server_protocol_string.trim().as_bytes().to_vec());
-
-        let mut i_c: Vec<u8> = Vec::new();
-        self.ciphers = self.ciphers[5..(self.ciphers.len() - self.ciphers[4] as usize)].to_vec();
-        i_c.append(&mut (self.ciphers.len() as u32).to_be_bytes().to_vec());
-        i_c.append(&mut self.ciphers);
-
-        let mut i_s: Vec<u8> = Vec::new();
-        self.received_ciphers = self.received_ciphers[5..(self.received_ciphers.len() - self.received_ciphers[4] as usize)].to_vec();
-        i_s.append(&mut (self.received_ciphers.len() as u32).to_be_bytes().to_vec());
-        i_s.append(&mut self.received_ciphers);
-        
-
-        let mut exchange_hash = crypto::make_hash(
-            &digest::SHA256,
-            &mut v_c, 
-            &mut v_s, 
-            &mut i_c, 
-            &mut i_s, 
-            &mut k_s, 
+        // Make Session ID 
+        self.client_session.make_session_id(
+            &digest::SHA256, 
+            server_protocol_string, 
+            &mut self.ciphers, 
+            &mut self.received_ciphers, 
+            &mut k_s,
             &mut e, 
-            &mut f,
-            &mut k,
-        );
+            &mut f, 
+            &mut k.clone());
 
-        //println!("{:x?}", exchange_hash);
+        // Host Key Check - TODO 
 
-        // Host Key check was skipped - TODO
+        // Check Server Signature 
         let mut signature_fixed_slice: [u8;64] = [0;64];
         signature_fixed_slice.copy_from_slice(self.server_signature.as_slice());
         let ed25519_signature = ed25519_dalek::Signature::new(signature_fixed_slice);
         let host_key_ed25519 = ed25519_dalek::PublicKey::from_bytes(self.server_host_key.as_slice()).unwrap();
 
-        // Checking server's signature
-        println!("[+] Server's signature OK?: {:?}", host_key_ed25519.verify(exchange_hash.as_slice(),  &ed25519_signature).is_ok());
-        /*
-        ///////////////////////////////// NEW_KEYS
+        println!("[+] Server's signature OK?: {:?}", 
+        host_key_ed25519.verify(self.client_session.session_id.as_slice(),  &ed25519_signature).is_ok());
+        
+        // NEW_KEYS 
+        self.new_keys_message();
+ 
+        // Derive Keys 
+        let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut self.client_session.session_id);
 
-        let mut new_keys: Vec<u8> = Vec::new();
-        new_keys.push(constants::Message::SSH_MSG_NEWKEYS);
-
-        self.client_session.pad_data(&mut new_keys, false);
-        self.client_session.write_to_server(&new_keys)?;
-
-        /////////////////////////////////
-
-        let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut exchange_hash);
-
-        ////////////////////////////////
-
+        // SERVICE REQUEST 
         let mut service_req: Vec<u8> = Vec::new();
         service_req.push(constants::Message::SSH_MSG_SERVICE_REQUEST);  
         service_req.append(&mut (constants::Strings::SSH_USERAUTH.len() as u32).to_be_bytes().to_vec());
@@ -221,36 +203,13 @@ impl SSH {
 
         self.client_session.pad_data(&mut service_req, true);
 
-        let mut sealing_key_data: [u8;64] = [0;64];
-        let mut opening_key_data: [u8;64] = [0;64];
-        let mut tag: [u8;16] = [0;16];
-        sealing_key_data.copy_from_slice(keys.encryption_key_client_to_server.as_slice());
-        opening_key_data.copy_from_slice(keys.encryption_key_server_to_client.as_slice());
-        let sealing_key = chacha20_poly1305_openssh::SealingKey::new(&sealing_key_data);
-        let opening_key = chacha20_poly1305_openssh::OpeningKey::new(&opening_key_data);
-        sealing_key.seal_in_place(self.client_session.sequence_number, &mut service_req, &mut tag);
+        let session_keys = crypto::SessionKeys::new(keys);
 
-        service_req.append(&mut tag.to_vec());
-        
-        self.client_session.write_to_server(&service_req)?;
-        
+        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut service_req);
 
-        let mut dec_response = self.client_session.read_from_server();
+        println!("{:x?}", session_keys.unseal_incoming_packet(&mut self.client_session));
+  
 
-        let mut tag: [u8;16] = [0;16];
-        tag.copy_from_slice(&dec_response[28..]);
-
-        let mut dec_response_length: [u8;4] = [0;4];
-        dec_response_length.copy_from_slice(&dec_response[0..4]);
-
-        let dec_response_length = 
-        u32::from_be_bytes(opening_key.decrypt_packet_length(self.client_session.sequence_number-1, dec_response_length));
-
-        let response_dec = 
-        opening_key.open_in_place(self.client_session.sequence_number-1, &mut dec_response[0..(dec_response_length+4) as usize], &mut tag).unwrap();
-        
-        println!("{:?}", response_dec);
-    */
         Ok(())
     }
 }
