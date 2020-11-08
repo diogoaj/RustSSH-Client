@@ -5,7 +5,7 @@ use rand::rngs::OsRng;
 use crate::{constants, crypto};
 
 pub struct Session {
-    reader: Cell<BufReader<TcpStream>>,
+    pub reader: Cell<BufReader<TcpStream>>,
     writer: Cell<BufWriter<TcpStream>>,
     pub csprng: OsRng, 
     pub client_sequence_number: u32,
@@ -68,7 +68,7 @@ impl Session {
             false => 16 - (data.len() as u32 + 5) % 16
         };
 
-        if padding < 4 { padding += 4};
+        if padding < 4 { padding += 8 };
 
         data.append(&mut vec![0; padding as usize]);
     

@@ -1,6 +1,7 @@
 use ring::{aead::chacha20_poly1305_openssh, digest};
 use crate::session::Session;
-use core::convert::TryInto;
+use std::str;
+
 
 pub struct SessionKeys {
     pub client_key: chacha20_poly1305_openssh::SealingKey,
@@ -65,7 +66,7 @@ impl SessionKeys {
                 ciphertext_in, 
                 &mut tag).unwrap();
 
-            println!("Decrypted packet: {:x?}", dec_response);
+            println!("Decrypted packet: {:?}", dec_response);
       
             if enc_response.len() == 0 {
                 break;
