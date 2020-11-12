@@ -2,16 +2,18 @@ use std::{cell::Cell, net::{SocketAddr, TcpStream, IpAddr}};
 use std::io::{BufReader, BufWriter, Result, prelude::*};
 use ring::digest;
 use rand::rngs::OsRng;
+
 use crate::{constants, crypto};
 
 pub struct Session {
-    pub reader: Cell<BufReader<TcpStream>>,
+    reader: Cell<BufReader<TcpStream>>,
     writer: Cell<BufWriter<TcpStream>>,
     pub csprng: OsRng, 
     pub client_sequence_number: u32,
     pub server_sequence_number: u32,
     pub session_id: Vec<u8>,
     pub data_sent: u32,
+    pub encrypted: bool,
 }
 
 impl Session {
@@ -25,7 +27,9 @@ impl Session {
             client_sequence_number: 0,
             server_sequence_number: 0,
             session_id: Vec::new(),
-            data_sent: 0
+            data_sent: 0,
+            encrypted: false,
+
         })
     }
 

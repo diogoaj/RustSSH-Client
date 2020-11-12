@@ -1,6 +1,5 @@
-use std::net::IpAddr;
+use std::{net::IpAddr, io};
 use std::str;
-use std::io::{self, Read};
 use rand::Rng;
 use ed25519_dalek::*;
 use ring::digest;
@@ -15,6 +14,7 @@ pub struct SSH{
     received_ciphers: Vec<u8>,
     server_host_key: Vec<u8>,
     server_signature: Vec<u8>, 
+    session_keys: Option<crypto::SessionKeys>
 }
 
 impl SSH {
@@ -24,7 +24,8 @@ impl SSH {
             ciphers: Vec::new(),
             received_ciphers: Vec::new(),
             server_host_key: Vec::new(),
-            server_signature: Vec::new()
+            server_signature: Vec::new(),
+            session_keys: None
         }
     }
 
@@ -47,13 +48,8 @@ impl SSH {
         self.client_session.read_line().unwrap()
     }
 
-    fn algorithm_exchange(&mut self) {
-        let received_ciphers: Vec<u8> = self.client_session.read_from_server();
-        
-        let _size = &received_ciphers[0..4];
-        let _pad = &received_ciphers[5];
-        let _code = &received_ciphers[6];
-        let _cookie = &received_ciphers[6..22];
+    fn algorithm_exchange(&mut self, received_ciphers: Vec<u8>) {
+        //let _cookie = &received_ciphers[6..22];
 
         let mut server_algorithms: Vec<&str> = Vec::new();
         let mut i = 22;
@@ -166,18 +162,19 @@ impl SSH {
 
         self.client_session.pad_data(&mut new_keys, false);
         self.client_session.write_to_server(&new_keys).unwrap();
+
+        self.client_session.encrypted = true;
     }
 
-    fn service_request_message(&mut self, session_keys: &crypto::SessionKeys){
+    fn service_request_message(&mut self){
         let mut service_request: Vec<u8> = Vec::new();
         service_request.push(constants::Message::SSH_MSG_SERVICE_REQUEST);  
         service_request.append(&mut (constants::Strings::SSH_USERAUTH.len() as u32).to_be_bytes().to_vec());
         service_request.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
         self.client_session.pad_data(&mut service_request, true);
-
-        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut service_request);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
+        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut service_request);
+        self.client_session.write_to_server(&mut service_request).unwrap();
     }
 
     fn authentication_request(&mut self, session_keys: &crypto::SessionKeys, username: String){
@@ -192,8 +189,7 @@ impl SSH {
 
         self.client_session.pad_data(&mut auth_request, true);
 
-        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut auth_request);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
+        session_keys.seal_packet(&mut self.client_session, &mut auth_request);
     }
 
     fn password_authentication(&mut self, session_keys: &crypto::SessionKeys, username: String, password: String){
@@ -210,8 +206,7 @@ impl SSH {
         password_auth.append(&mut password.as_bytes().to_vec());
 
         self.client_session.pad_data(&mut password_auth, true);
-        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut password_auth);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
+        session_keys.seal_packet(&mut self.client_session, &mut password_auth);
     }
 
     fn open_channel(&mut self, session_keys: &crypto::SessionKeys) {
@@ -224,9 +219,7 @@ impl SSH {
         open_request.append(&mut (16384 as u32).to_be_bytes().to_vec());
 
         self.client_session.pad_data(&mut open_request, true);
-        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut open_request);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
+        session_keys.seal_packet(&mut self.client_session, &mut open_request);
     }
 
     fn channel_request_pty(&mut self, session_keys: &crypto::SessionKeys){
@@ -250,8 +243,7 @@ impl SSH {
         channel_request.push(0);
 
         self.client_session.pad_data(&mut channel_request, true);
-        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut channel_request);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
+        session_keys.seal_packet(&mut self.client_session, &mut channel_request);
     }
 
     fn channel_request_shell(&mut self, session_keys: &crypto::SessionKeys) {
@@ -263,8 +255,7 @@ impl SSH {
         channel_request.push(1);
 
         self.client_session.pad_data(&mut channel_request, true);
-        session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut channel_request);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
+        session_keys.seal_packet(&mut self.client_session, &mut channel_request);
     }
 
     // Handle INTERACTIVE SESSION 
@@ -277,12 +268,8 @@ impl SSH {
             command.push(c);
         
             self.client_session.pad_data(&mut command, true);
-            session_keys.seal_packet_and_write_to_server(&mut self.client_session, &mut command);
-            session_keys.unseal_incoming_packet(&mut self.client_session);
+            session_keys.seal_packet(&mut self.client_session, &mut command);
         } 
-
-        session_keys.unseal_incoming_packet(&mut self.client_session);
-        session_keys.unseal_incoming_packet(&mut self.client_session);
     }
 
 
@@ -291,6 +278,61 @@ impl SSH {
         let server_protocol_string = self.protocol_string_exchange(constants::Strings::CLIENT_VERSION);
         println!("[+] Server version: {}", server_protocol_string.trim());
 
+        loop {
+            let mut queue: Vec<Vec<u8>> = Vec::new();
+            let data = self.client_session.read_from_server();
+
+            queue.push(data);
+
+            if self.client_session.encrypted {
+                queue = self.session_keys.as_ref().unwrap().unseal_packets(
+                    &mut self.client_session, 
+                    &mut queue[0]);
+            }
+
+            for packet in queue {
+                println!("{:?}", packet);
+
+                let (_, data_no_size) = packet.split_at(4);
+                let (_, data_no_size) = data_no_size.split_at(1);
+                let (code, _) = data_no_size.split_at(1);
+
+                match code[0] {
+                    constants::Message::SSH_MSG_KEXINIT => {
+                        self.algorithm_exchange(packet.to_vec());
+                        let (mut k_s, mut e, mut f, mut k) = self.key_exchange();
+
+                        // Make Session ID 
+                        self.client_session.make_session_id(
+                            &digest::SHA256, 
+                            server_protocol_string.clone(), 
+                            &mut self.ciphers, 
+                            &mut self.received_ciphers, 
+                            &mut k_s,
+                            &mut e, 
+                            &mut f, 
+                            &mut k.clone());
+                            
+                        let mut signature_fixed_slice: [u8;64] = [0;64];
+                        signature_fixed_slice.copy_from_slice(self.server_signature.as_slice());
+                        let ed25519_signature = ed25519_dalek::Signature::new(signature_fixed_slice);
+                        let host_key_ed25519 = ed25519_dalek::PublicKey::from_bytes(self.server_host_key.as_slice()).unwrap();
+
+                        println!("[+] Server's signature OK?: {:?}", host_key_ed25519.verify(self.client_session.session_id.as_slice(),  &ed25519_signature).is_ok());
+                        self.new_keys_message();
+                        
+                        let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut self.client_session.session_id);
+                        let session_keys = crypto::SessionKeys::new(keys);
+                        self.session_keys = Some(session_keys);
+                        self.service_request_message();
+                        }
+                    constants::Message::SSH_MSG_SERVICE_ACCEPT =>  println!("6"),
+                    _ => println!("NO Message available"),
+                }
+            }
+        }
+
+        /*
         // Algorithm Exchange 
         self.algorithm_exchange();
 
@@ -341,7 +383,7 @@ impl SSH {
         self.channel_request_shell(&session_keys);
 
         self.issue_command("ls -la\r".to_string(), &session_keys);
-
+*/
         Ok(())
     }
 }

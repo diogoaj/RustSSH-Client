@@ -21,17 +21,18 @@ impl SessionKeys {
         }
     }
 
-    pub fn seal_packet_and_write_to_server(&self, client_session: &mut Session, packet: &mut Vec<u8>){
+    pub fn seal_packet(&self, client_session: &mut Session, packet: &mut Vec<u8>) -> Vec<u8>{
         let mut tag: [u8;16] = [0;16];
         self.client_key.seal_in_place(client_session.client_sequence_number, packet, &mut tag);
 
         packet.append(&mut tag.to_vec());
-        client_session.write_to_server(&packet).unwrap();
+        packet.clone()
     }
 
-    pub fn unseal_incoming_packet(&self, client_session: &mut Session){
-        let mut enc_response = client_session.read_from_server();
-        let mut enc_response = enc_response.as_mut_slice();
+    pub fn unseal_packets(&self, client_session: &mut Session, packets: &mut Vec<u8>) -> Vec<Vec<u8>>{
+        let mut enc_response = packets.as_mut_slice();
+
+        let mut responses: Vec<Vec<u8>> = Vec::new();
 
         loop {
             println!("Encrypted packet: {:x?}", enc_response);
@@ -42,11 +43,13 @@ impl SessionKeys {
             let mut enc_response_len: [u8;4] = [0;4];
             enc_response_len.copy_from_slice(enc_response_len_slice);
 
-            let dec_response_len = u32::from_be_bytes(
+            let dec_response_len_slice = 
                 self.server_key.decrypt_packet_length(
                     client_session.server_sequence_number, 
-                    enc_response_len)
+                    enc_response_len
                 );
+
+            let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
 
             println!("Length {:x?}", dec_response_len);
 
@@ -67,6 +70,8 @@ impl SessionKeys {
                 &mut tag).unwrap();
 
             println!("Decrypted packet: {:?}", dec_response);
+
+            responses.push([enc_response_len.to_vec(), dec_response.to_vec()].concat());
       
             if enc_response.len() == 0 {
                 break;
@@ -74,6 +79,8 @@ impl SessionKeys {
                 client_session.server_sequence_number += 1;
             }
         }
+
+        responses
     }
 }
 
