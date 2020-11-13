@@ -79,7 +79,7 @@ impl SSH {
 
         ciphers.append(&mut vec![0;13]); // Last bytes - 0000 0000 0000 0
 
-        self.client_session.pad_data(&mut ciphers, false);
+        self.client_session.pad_data(&mut ciphers);
         self.client_session.write_to_server(&ciphers).unwrap();
 
         self.ciphers = ciphers;
@@ -91,7 +91,7 @@ impl SSH {
         let mut client_public_key = kex.generate_public_key();
         let e = &client_public_key.clone()[1..];
 
-        self.client_session.pad_data(&mut client_public_key, false);
+        self.client_session.pad_data(&mut client_public_key);
         self.client_session.write_to_server(&client_public_key).unwrap();
 
         let received_ecdh: Vec<u8> = self.client_session.read_from_server();
@@ -160,7 +160,7 @@ impl SSH {
         let mut new_keys: Vec<u8> = Vec::new();
         new_keys.push(constants::Message::SSH_MSG_NEWKEYS);
 
-        self.client_session.pad_data(&mut new_keys, false);
+        self.client_session.pad_data(&mut new_keys);
         self.client_session.write_to_server(&new_keys).unwrap();
 
         self.client_session.encrypted = true;
@@ -172,7 +172,7 @@ impl SSH {
         service_request.append(&mut (constants::Strings::SSH_USERAUTH.len() as u32).to_be_bytes().to_vec());
         service_request.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
-        self.client_session.pad_data(&mut service_request, true);
+        self.client_session.pad_data(&mut service_request);
         self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut service_request);
         self.client_session.write_to_server(&mut service_request).unwrap();
     }
@@ -187,7 +187,7 @@ impl SSH {
         auth_request.append(&mut (4 as u32).to_be_bytes().to_vec());
         auth_request.append(&mut "none".as_bytes().to_vec());
 
-        self.client_session.pad_data(&mut auth_request, true);
+        self.client_session.pad_data(&mut auth_request);
 
         session_keys.seal_packet(&mut self.client_session, &mut auth_request);
     }
@@ -205,7 +205,7 @@ impl SSH {
         password_auth.append(&mut (password.len() as u32).to_be_bytes().to_vec());
         password_auth.append(&mut password.as_bytes().to_vec());
 
-        self.client_session.pad_data(&mut password_auth, true);
+        self.client_session.pad_data(&mut password_auth);
         self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut password_auth);
         self.client_session.write_to_server(&mut password_auth).unwrap();
     }
@@ -219,7 +219,7 @@ impl SSH {
         open_request.append(&mut (1048576 as u32).to_be_bytes().to_vec());
         open_request.append(&mut (16384 as u32).to_be_bytes().to_vec());
 
-        self.client_session.pad_data(&mut open_request, true);
+        self.client_session.pad_data(&mut open_request);
         self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut open_request);
         self.client_session.write_to_server(&mut open_request).unwrap();
     }
@@ -244,7 +244,7 @@ impl SSH {
         channel_request.append(&mut (38400 as u32).to_be_bytes().to_vec());
         channel_request.push(0);
 
-        self.client_session.pad_data(&mut channel_request, true);
+        self.client_session.pad_data(&mut channel_request);
         self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut channel_request);
         self.client_session.write_to_server(&mut channel_request).unwrap();
     }
@@ -257,23 +257,23 @@ impl SSH {
         channel_request.append(&mut constants::Strings::SHELL.as_bytes().to_vec());
         channel_request.push(1);
 
-        self.client_session.pad_data(&mut channel_request, true);
+        self.client_session.pad_data(&mut channel_request);
         self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut channel_request);
         self.client_session.write_to_server(&mut channel_request).unwrap();
     }
 
     // Handle INTERACTIVE SESSION 
-    fn issue_command(&mut self, command_string: String, session_keys: &crypto::SessionKeys) {
-        for c in command_string.bytes() {
-            let mut command: Vec<u8> = Vec::new();
-            command.push(constants::Message::SSH_MSG_CHANNEL_DATA);
-            command.append(&mut (0 as u32).to_be_bytes().to_vec());
-            command.append(&mut (1 as u32).to_be_bytes().to_vec());
-            command.push(c);
-        
-            self.client_session.pad_data(&mut command, true);
-            session_keys.seal_packet(&mut self.client_session, &mut command);
-        } 
+    fn issue_command(&mut self, command_string: String) {
+        let mut command: Vec<u8> = Vec::new();
+        command.push(constants::Message::SSH_MSG_CHANNEL_DATA);
+        command.append(&mut (0 as u32).to_be_bytes().to_vec());
+        command.append(&mut (3 as u32).to_be_bytes().to_vec());
+        command.append(&mut command_string.as_bytes().to_vec());
+    
+        self.client_session.pad_data(&mut command);
+        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut command);
+        self.client_session.write_to_server(&mut command).unwrap();
+
     }
 
 
@@ -386,11 +386,7 @@ impl SSH {
                     _ => println!("NO Message available"),
                 }
             }
-        }
-
-        /*
-        self.issue_command("ls -la\r".to_string(), &session_keys);
-*/
+        }  
         Ok(())
     }
 }

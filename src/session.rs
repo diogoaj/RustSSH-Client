@@ -66,8 +66,8 @@ impl Session {
         w.flush()
     }
 
-    pub fn pad_data(&self, data: &mut Vec<u8>, enc: bool) {
-        let mut padding = match enc {
+    pub fn pad_data(&self, data: &mut Vec<u8>) {
+        let mut padding = match self.encrypted {
             true => 8 - (data.len() as u32 + 1) % 8,
             false => 16 - (data.len() as u32 + 5) % 16
         };
