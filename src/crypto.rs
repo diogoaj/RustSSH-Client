@@ -35,7 +35,7 @@ impl SessionKeys {
         let mut responses: Vec<Vec<u8>> = Vec::new();
 
         loop {
-            println!("Encrypted packet: {:x?}", enc_response);
+            //println!("Encrypted packet: {:x?}", enc_response);
 
             let (enc_response_len_slice, enc_response_slice) = enc_response.split_at_mut(4);
             enc_response = enc_response_slice;
@@ -51,7 +51,7 @@ impl SessionKeys {
 
             let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
 
-            println!("Length {:x?}", dec_response_len);
+            //println!("Length {:x?}", dec_response_len);
 
             let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
             enc_response = enc_response_slice;
@@ -69,9 +69,9 @@ impl SessionKeys {
                 ciphertext_in, 
                 &mut tag).unwrap();
 
-            println!("Decrypted packet: {:?}", dec_response);
+            //println!("Decrypted packet: {:?}", dec_response);
 
-            responses.push([enc_response_len.to_vec(), dec_response.to_vec()].concat());
+            responses.push([dec_response_len_slice.to_vec(), dec_response.to_vec()].concat());
       
             if enc_response.len() == 0 {
                 break;
