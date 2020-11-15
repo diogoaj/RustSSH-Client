@@ -1,7 +1,5 @@
 use ring::{aead::chacha20_poly1305_openssh, digest};
 use crate::session::Session;
-use std::str;
-
 
 pub struct SessionKeys {
     pub client_key: chacha20_poly1305_openssh::SealingKey,
