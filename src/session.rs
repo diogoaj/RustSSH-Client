@@ -2,22 +2,25 @@ use std::{cell::Cell, net::{SocketAddr, TcpStream, IpAddr}};
 use std::io::{BufReader, BufWriter, Result, prelude::*};
 use ring::digest;
 use rand::rngs::OsRng;
+
 use crate::{constants, crypto};
 
 pub struct Session {
-    pub reader: Cell<BufReader<TcpStream>>,
+    reader: Cell<BufReader<TcpStream>>,
     writer: Cell<BufWriter<TcpStream>>,
     pub csprng: OsRng, 
     pub client_sequence_number: u32,
     pub server_sequence_number: u32,
     pub session_id: Vec<u8>,
     pub data_sent: u32,
+    pub encrypted: bool,
 }
 
 impl Session {
     pub fn new(host: IpAddr, port: u16) -> Result<Self> {
         let socket = SocketAddr::new(host, port);
         let stream = TcpStream::connect(socket).unwrap();
+        stream.set_nonblocking(true).unwrap();
         Ok(Session {
             reader: Cell::new(BufReader::new(stream.try_clone()?)),
             writer: Cell::new(BufWriter::new(stream)),
@@ -25,7 +28,9 @@ impl Session {
             client_sequence_number: 0,
             server_sequence_number: 0,
             session_id: Vec::new(),
-            data_sent: 0
+            data_sent: 0,
+            encrypted: false,
+
         })
     }
 
@@ -33,7 +38,12 @@ impl Session {
         let r = self.reader.get_mut();
         let mut data = String::new();
 
-        r.read_line(&mut data)?;
+        loop {
+            match r.read_line(&mut data) {
+                Ok(u) => break,
+                Err(e) => continue,
+            }
+        }
         Ok(data)
     }
 
@@ -47,10 +57,15 @@ impl Session {
 
     pub fn read_from_server(&mut self) -> Vec<u8> {
         let r = self.reader.get_mut();
-        let received_data: Vec<u8> = r.fill_buf().unwrap().to_vec();
+        let result= r.fill_buf();
+        let mut received_data: Vec<u8> = Vec::new();
+
+        if result.is_ok() {
+            received_data = result.unwrap().to_vec();
+            self.server_sequence_number += 1;
+        } 
 
         r.consume(received_data.len());
-        self.server_sequence_number += 1;
         received_data
     }
 
@@ -62,8 +77,8 @@ impl Session {
         w.flush()
     }
 
-    pub fn pad_data(&self, data: &mut Vec<u8>, enc: bool) {
-        let mut padding = match enc {
+    pub fn pad_data(&self, data: &mut Vec<u8>) {
+        let mut padding = match self.encrypted {
             true => 8 - (data.len() as u32 + 1) % 8,
             false => 16 - (data.len() as u32 + 5) % 16
         };

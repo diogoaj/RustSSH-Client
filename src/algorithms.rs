@@ -19,7 +19,7 @@ pub const PUBLIC_KEY_ALGORITHMS: &str = "ssh-ed25519";
 pub const ENCRYPTION_ALGORITHMS: &str = "chacha20-poly1305@openssh.com";
 
 // MAC Algorithm Names
-pub const MAC_ALGORITHMS: &str = "hmac-sha2-256";
+pub const MAC_ALGORITHMS: &str = "none";
 
 // Compression Algorithm Names
 pub const COMPRESSION_ALGORITHMS: &str = "none";

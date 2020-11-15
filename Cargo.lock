@@ -262,6 +262,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "numtoa"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8f8bdf33df195859076e54ab11ee78a1b208382d3a26ec40d142ffc1ecc49ef"
+
+[[package]]
 name = "once_cell"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -278,12 +284,6 @@ name = "os_str_bytes"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ac6fe3538f701e339953a3ebbe4f39941aababa8a3f6964635b24ab526daeac"
-
-[[package]]
-name = "pin-project-lite"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c917123afa01924fc84bb20c4c03f004d9c38e5127e3c039bbf7f4b9c76a2f6b"
 
 [[package]]
 name = "ppv-lite86"
@@ -375,6 +375,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_syscall"
+version = "0.1.57"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
+
+[[package]]
+name = "redox_termios"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e891cfe48e9100a70a3b6eb652fef28920c117d366339687bd5576160db0f76"
+dependencies = [
+ "redox_syscall",
+]
+
+[[package]]
 name = "ring"
 version = "0.16.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -400,7 +415,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust_ssh_client"
+name = "rustssh_client"
 version = "0.1.0"
 dependencies = [
  "clap",
@@ -408,7 +423,7 @@ dependencies = [
  "rand",
  "ring",
  "rpassword",
- "tokio",
+ "termion",
  "x25519-dalek",
 ]
 
@@ -488,6 +503,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "termion"
+version = "1.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c22cec9d8978d906be5ac94bceb5a010d885c626c4c8855721a4dbd20e3ac905"
+dependencies = [
+ "libc 0.2.79",
+ "numtoa",
+ "redox_syscall",
+ "redox_termios",
+]
+
+[[package]]
 name = "termios"
 version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -503,16 +530,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "203008d98caf094106cfaba70acfed15e18ed3ddb7d94e49baec153a2b462789"
 dependencies = [
  "unicode-width",
-]
-
-[[package]]
-name = "tokio"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5ca08accbcb46f11fd8d2d1c6158c348b7888009a1f39260bcad66f6a454250"
-dependencies = [
- "autocfg",
- "pin-project-lite",
 ]
 
 [[package]]
