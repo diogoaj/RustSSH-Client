@@ -1,4 +1,4 @@
-use std::{sync::Mutex, io::Write, io::stdin, io::stdout, net::IpAddr, process::exit, str, sync::mpsc::Sender, sync::mpsc, thread};
+use std::{sync::Mutex, io::stdin, io::stdout, sync::mpsc::Sender};
 use termion::input::TermRead;
 
 pub struct Terminal{
@@ -13,7 +13,7 @@ impl Terminal{
         use termion::raw::IntoRawMode;
 
         let stdin = stdin();
-        let mut stdout = stdout().into_raw_mode().unwrap();
+        let _stdout = stdout().into_raw_mode().unwrap();
 
         for c in stdin.keys() {
             match c.unwrap() {

@@ -40,8 +40,8 @@ impl Session {
 
         loop {
             match r.read_line(&mut data) {
-                Ok(u) => break,
-                Err(e) => continue,
+                Ok(_) => break,
+                Err(_) => continue,
             }
         }
         Ok(data)

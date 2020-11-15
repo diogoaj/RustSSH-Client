@@ -113,6 +113,7 @@ impl Keys {
         keys
     } 
 
+    #[allow(dead_code)] // For now
     pub fn rekey(&mut self, algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>, session_id: &mut Vec<u8>) {
         let mut keys: Vec<Vec<u8>> = Vec::new();
 
