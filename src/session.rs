@@ -20,6 +20,7 @@ impl Session {
     pub fn new(host: IpAddr, port: u16) -> Result<Self> {
         let socket = SocketAddr::new(host, port);
         let stream = TcpStream::connect(socket).unwrap();
+        stream.set_nonblocking(true).unwrap();
         Ok(Session {
             reader: Cell::new(BufReader::new(stream.try_clone()?)),
             writer: Cell::new(BufWriter::new(stream)),
@@ -37,7 +38,12 @@ impl Session {
         let r = self.reader.get_mut();
         let mut data = String::new();
 
-        r.read_line(&mut data)?;
+        loop {
+            match r.read_line(&mut data) {
+                Ok(u) => break,
+                Err(e) => continue,
+            }
+        }
         Ok(data)
     }
 
@@ -51,10 +57,15 @@ impl Session {
 
     pub fn read_from_server(&mut self) -> Vec<u8> {
         let r = self.reader.get_mut();
-        let received_data: Vec<u8> = r.fill_buf().unwrap().to_vec();
+        let result= r.fill_buf();
+        let mut received_data: Vec<u8> = Vec::new();
+
+        if result.is_ok() {
+            received_data = result.unwrap().to_vec();
+            self.server_sequence_number += 1;
+        } 
 
         r.consume(received_data.len());
-        self.server_sequence_number += 1;
         received_data
     }
 

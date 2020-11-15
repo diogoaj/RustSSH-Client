@@ -1,4 +1,4 @@
-use std::{io::Write, io::stdin, io::stdout, net::IpAddr, process::exit, str, thread};
+use std::{sync::Mutex, io::Write, io::stdin, io::stdout, net::IpAddr, process::exit, str, sync::mpsc, thread};
 use core::convert::TryInto;
 use rand::Rng;
 
@@ -7,7 +7,7 @@ use ring::digest;
 
 use termion::input::TermRead;
 
-use crate::{constants, algorithms, crypto, session::Session, kex};
+use crate::{constants, algorithms, crypto, session::Session, kex, terminal};
 
 pub struct SSH{
     username: String,
@@ -101,7 +101,11 @@ impl SSH {
         self.client_session.pad_data(&mut client_public_key);
         self.client_session.write_to_server(&client_public_key).unwrap();
 
-        let received_ecdh: Vec<u8> = self.client_session.read_from_server();
+        let mut received_ecdh: Vec<u8> = self.client_session.read_from_server();
+        loop {
+            if received_ecdh.len() != 0 {break;}
+            received_ecdh = self.client_session.read_from_server();
+        }
 
         let (_size, received_ecdh) = received_ecdh.split_at(4);
         let (_pad, received_ecdh) = received_ecdh.split_at(1);
@@ -283,41 +287,10 @@ impl SSH {
 
     }
 
-    fn handle_command(&mut self) -> usize{
-        use termion::event::Key;
-        use termion::raw::IntoRawMode;
-
-        let stdin = stdin();
-        let mut stdout = stdout().into_raw_mode().unwrap();
-        
-        for c in stdin.keys() {
-            match c.unwrap() {
-                Key::Char('\n') => {
-                    stdout.flush().unwrap();
-                    self.handle_key('\n' as u8);
-                    break;
-                }
-                Key::Ctrl('c') => return 1,
-                Key::Char(c) => {
-                    print!("{}", c);
-                    stdout.flush().unwrap();
-                    self.handle_key(c as u8);
-                }
-                //Key::Alt(c) => print!("^{}", c),
-                //Key::Ctrl(c) => print!("*{}", c),
-                //Key::Esc => print!("ESC"),
-                //Key::Left => print!("←"),
-                //Key::Right => print!("→"),
-                //Key::Up => print!("↑"),
-                //Key::Down => print!("↓"),
-                //Key::Backspace => print!("×"),
-                _ => {}
-            }  
-        }
-        0
-    }
-
     pub fn ssh_protocol(&mut self) -> std::io::Result<()>{
+        let (tx, rx) = mpsc::channel();
+        let mut terminal_launched = false;
+
         // Protocol String Exchange 
         let server_protocol_string = self.protocol_string_exchange(constants::Strings::CLIENT_VERSION);
         println!("[+] Server version: {}", server_protocol_string.trim());
@@ -326,16 +299,23 @@ impl SSH {
         loop {
             let mut queue: Vec<Vec<u8>> = Vec::new();
             let data = self.client_session.read_from_server();
+            if data.len() > 0 {
+                queue.push(data);
 
-            queue.push(data);
-
-            // Decrypt packets if session is encrypted
-            if self.client_session.encrypted {
-                queue = self.session_keys.as_ref().unwrap().unseal_packets(
-                    &mut self.client_session, 
-                    &mut queue[0]);
+                // Decrypt packets if session is encrypted
+                if self.client_session.encrypted {
+                    queue = self.session_keys.as_ref().unwrap().unseal_packets(
+                        &mut self.client_session, 
+                        &mut queue[0]);
+                }
+            } else {
+                let result = rx.try_recv();
+                match result {
+                    Ok(ch) => self.handle_key(ch),
+                    Err(e) => (),
+                }
             }
-
+            
             for packet in queue {
                 let (_, data_no_size) = packet.split_at(4);
                 let (padding, data_no_size) = data_no_size.split_at(1);
@@ -411,6 +391,7 @@ impl SSH {
                         //let (size, data_no_size) = data_no_size.split_at(4);
                         //let size = u32::from_be_bytes(size.try_into().unwrap());
                         //let (recipient_channel, data_no_size) = data_no_size.split_at(4);
+                        terminal_launched = true;
                     }
                     constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
                         // Figure this out later
@@ -423,18 +404,19 @@ impl SSH {
                         let data_size = u32::from_be_bytes(data_size.try_into().unwrap());
                         let to_print = str::from_utf8(&data_no_size[..data_size as usize]).unwrap();
 
-                        if to_print.ends_with(" ") && to_print.len() != 1{
-                            print!("{}", to_print);
-                            stdout().flush().unwrap();
-                            // Handle terminal interaction
-                            if self.handle_command() == 1 { 
-                                exit(1); 
-                            } 
-                        } else {
-                            if to_print.len() != 1 {
-                                print!("{}", to_print);
-                            }
-                        }  
+                        if terminal_launched == true {
+                            let clone = tx.clone();
+                            thread::spawn(move ||{
+                                let mut terminal = terminal::Terminal::new(Mutex::new(clone));
+                                if terminal.handle_command() == 1 { 
+                                    exit(1); 
+                                } 
+                            });    
+                            terminal_launched = false;
+                        }
+
+                        print!("{}", to_print);
+                        stdout().flush().unwrap();
                     }
                     _ => println!("Could not recognize this message!"),
                 }
