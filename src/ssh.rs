@@ -1,14 +1,16 @@
-use std::{str, process::exit, net::IpAddr, io};
+use std::{sync::Mutex, io::Write, io::stdin, io::stdout, net::IpAddr, process::exit, str, sync::mpsc, thread};
+use core::convert::TryInto;
 use rand::Rng;
 
 use ed25519_dalek::*;
 use ring::digest;
-use core::convert::TryInto;
-use rpassword::read_password;
 
-use crate::{constants, algorithms, crypto, session::Session, kex};
+use termion::input::TermRead;
+
+use crate::{constants, algorithms, crypto, session::Session, kex, terminal};
 
 pub struct SSH{
+    username: String,
     client_session: Session,
     ciphers: Vec<u8>,
     received_ciphers: Vec<u8>,
@@ -18,8 +20,9 @@ pub struct SSH{
 }
 
 impl SSH {
-    pub fn new(host: IpAddr, port: u16) -> SSH {
+    pub fn new(username: String, host: IpAddr, port: u16) -> SSH {
         SSH { 
+            username,
             client_session: Session::new(host, port).unwrap(),
             ciphers: Vec::new(),
             received_ciphers: Vec::new(),
@@ -29,15 +32,19 @@ impl SSH {
         }
     }
 
-    fn get_username_and_password(&self) -> (String, String) {
-        println!("[+] Password authentication");
-        println!("Enter Username:");
-        let mut username = String::new();
-        io::stdin().read_line(&mut username).unwrap();
-        println!("Enter Password:");
-        let password = read_password().unwrap();
+    fn get_password(&self) -> String {
+        let stdout = stdout();
+        let mut stdout = stdout.lock();
+        let stdin = stdin();
+        let mut stdin = stdin.lock();
 
-        (username.trim().to_string(), password)
+        println!("[+] Password authentication");
+        stdout.write_all(b"password: ").unwrap();
+        stdout.flush().unwrap();
+        let password = stdin.read_passwd(&mut stdout).unwrap().unwrap();
+        stdout.write_all(b"\n").unwrap();
+
+        password
     }
 
     fn protocol_string_exchange(&mut self, client_protocol_string: &str) -> String{
@@ -94,7 +101,11 @@ impl SSH {
         self.client_session.pad_data(&mut client_public_key);
         self.client_session.write_to_server(&client_public_key).unwrap();
 
-        let received_ecdh: Vec<u8> = self.client_session.read_from_server();
+        let mut received_ecdh: Vec<u8> = self.client_session.read_from_server();
+        loop {
+            if received_ecdh.len() != 0 {break;}
+            received_ecdh = self.client_session.read_from_server();
+        }
 
         let (_size, received_ecdh) = received_ecdh.split_at(4);
         let (_pad, received_ecdh) = received_ecdh.split_at(1);
@@ -263,12 +274,12 @@ impl SSH {
     }
 
     // Handle INTERACTIVE SESSION 
-    fn issue_command(&mut self, command_string: String) {
+    fn handle_key(&mut self, key: u8) {
         let mut command: Vec<u8> = Vec::new();
         command.push(constants::Message::SSH_MSG_CHANNEL_DATA);
         command.append(&mut (0 as u32).to_be_bytes().to_vec());
-        command.append(&mut (3 as u32).to_be_bytes().to_vec());
-        command.append(&mut command_string.as_bytes().to_vec());
+        command.append(&mut (1 as u32).to_be_bytes().to_vec());
+        command.push(key);
     
         self.client_session.pad_data(&mut command);
         self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut command);
@@ -276,8 +287,10 @@ impl SSH {
 
     }
 
-
     pub fn ssh_protocol(&mut self) -> std::io::Result<()>{
+        let (tx, rx) = mpsc::channel();
+        let mut terminal_launched = false;
+
         // Protocol String Exchange 
         let server_protocol_string = self.protocol_string_exchange(constants::Strings::CLIENT_VERSION);
         println!("[+] Server version: {}", server_protocol_string.trim());
@@ -286,16 +299,23 @@ impl SSH {
         loop {
             let mut queue: Vec<Vec<u8>> = Vec::new();
             let data = self.client_session.read_from_server();
+            if data.len() > 0 {
+                queue.push(data);
 
-            queue.push(data);
-
-            // Decrypt packets if session is encrypted
-            if self.client_session.encrypted {
-                queue = self.session_keys.as_ref().unwrap().unseal_packets(
-                    &mut self.client_session, 
-                    &mut queue[0]);
+                // Decrypt packets if session is encrypted
+                if self.client_session.encrypted {
+                    queue = self.session_keys.as_ref().unwrap().unseal_packets(
+                        &mut self.client_session, 
+                        &mut queue[0]);
+                }
+            } else {
+                let result = rx.try_recv();
+                match result {
+                    Ok(ch) => self.handle_key(ch),
+                    Err(e) => (),
+                }
             }
-
+            
             for packet in queue {
                 let (_, data_no_size) = packet.split_at(4);
                 let (padding, data_no_size) = data_no_size.split_at(1);
@@ -303,7 +323,7 @@ impl SSH {
 
                 match code[0] {
                     constants::Message::SSH_MSG_KEXINIT => {
-                        println!("[+] Received Code {}", constants::Message::SSH_MSG_KEXINIT);
+                        //println!("[+] Received Code {}", constants::Message::SSH_MSG_KEXINIT);
                         self.algorithm_exchange(packet.to_vec());
                         let (mut k_s, mut e, mut f, mut k) = self.key_exchange();
 
@@ -332,25 +352,25 @@ impl SSH {
                         self.service_request_message();
                         }
                     constants::Message::SSH_MSG_SERVICE_ACCEPT => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_SERVICE_ACCEPT);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_SERVICE_ACCEPT);
                         let (size, data_no_size) = data_no_size.split_at(4);
                         let size = u32::from_be_bytes(size.try_into().unwrap());
                         println!("{}", str::from_utf8(&data_no_size[..size as usize]).unwrap());
-                        let (username, password) = self.get_username_and_password();
-                        self.password_authentication(username, password);
+                        let password = self.get_password();
+                        self.password_authentication(self.username.clone(), password);
                     }
                     constants::Message::SSH_MSG_USERAUTH_SUCCESS => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_USERAUTH_SUCCESS);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_USERAUTH_SUCCESS);
                         println!("[+] Authentication succeded");
                         self.open_channel();
                     }
                     constants::Message::SSH_MSG_GLOBAL_REQUEST => {
                         // Handle host key check upon receiving -> hostkeys-00@openssh.com
                         // Ignore for now
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_GLOBAL_REQUEST);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_GLOBAL_REQUEST);
                     }
                     constants::Message::SSH_MSG_CHANNEL_OPEN_CONFIRMATION => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_OPEN_CONFIRMATION);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_OPEN_CONFIRMATION);
                         //let (size, data_no_size) = data_no_size.split_at(4);
                         //let size = u32::from_be_bytes(size.try_into().unwrap());
                         //let (recipient_channel, data_no_size) = data_no_size.split_at(4);
@@ -361,29 +381,44 @@ impl SSH {
                         self.channel_request_shell();
                     }
                     constants::Message::SSH_MSG_CHANNEL_OPEN_FAILURE => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_OPEN_FAILURE);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_OPEN_FAILURE);
                         println!("[+] Channel open failed, exiting.");
                         exit(1);
                     }
                     constants::Message::SSH_MSG_CHANNEL_SUCCESS => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_SUCCESS);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_SUCCESS);
                         println!("Channel open succeeded.");
                         //let (size, data_no_size) = data_no_size.split_at(4);
                         //let size = u32::from_be_bytes(size.try_into().unwrap());
                         //let (recipient_channel, data_no_size) = data_no_size.split_at(4);
+                        terminal_launched = true;
                     }
                     constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
                         // Figure this out later
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
                     }
                     constants::Message::SSH_MSG_CHANNEL_DATA => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_DATA);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_DATA);
                         let (recipient_channel, data_no_size) = data_no_size.split_at(4);
                         let (data_size, data_no_size) = data_no_size.split_at(4);
                         let data_size = u32::from_be_bytes(data_size.try_into().unwrap());
-                        println!("{}", str::from_utf8(&data_no_size[..data_size as usize]).unwrap());
+                        let to_print = str::from_utf8(&data_no_size[..data_size as usize]).unwrap();
+
+                        if terminal_launched == true {
+                            let clone = tx.clone();
+                            thread::spawn(move ||{
+                                let mut terminal = terminal::Terminal::new(Mutex::new(clone));
+                                if terminal.handle_command() == 1 { 
+                                    exit(1); 
+                                } 
+                            });    
+                            terminal_launched = false;
+                        }
+
+                        print!("{}", to_print);
+                        stdout().flush().unwrap();
                     }
-                    _ => println!("NO Message available"),
+                    _ => println!("Could not recognize this message!"),
                 }
             }
         }  

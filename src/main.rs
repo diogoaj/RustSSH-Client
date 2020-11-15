@@ -7,16 +7,18 @@ mod ssh;
 mod crypto;
 mod session;
 mod kex;
+mod terminal;
 
 #[derive(Clap)]
 struct Opts {
+    username: String,
     ip: IpAddr,
     port: u16,
 }
 
 fn main() -> std::io::Result<()>{
     let opts: Opts = Opts::parse();
-    let mut ssh_client = ssh::SSH::new(opts.ip, opts.port);
+    let mut ssh_client = ssh::SSH::new(opts.username, opts.ip, opts.port);
 
     ssh_client.ssh_protocol()
 }

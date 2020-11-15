@@ -1,5 +1,5 @@
 [package]
-name = "rust_ssh_client"
+name = "rustssh_client"
 version = "0.1.0"
 authors = ["Diogo Jerónimo"]
 edition = "2018"
@@ -13,4 +13,4 @@ x25519-dalek = "0.6"
 ed25519-dalek = "1.0.1"
 ring = "0.16.15"
 rand = "0.7.3"
-tokio = "0.3.3"
+termion = "1.5.5"
