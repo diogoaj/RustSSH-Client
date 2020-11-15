@@ -258,7 +258,6 @@ impl SSH {
         self.client_session.write_to_server(&mut channel_request).unwrap();
     }
 
-    // Handle INTERACTIVE SESSION 
     fn handle_key(&mut self, key: u8) {
         let mut command: Vec<u8> = Vec::new();
         command.push(constants::Message::SSH_MSG_CHANNEL_DATA);
@@ -269,7 +268,6 @@ impl SSH {
         self.client_session.pad_data(&mut command);
         self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut command);
         self.client_session.write_to_server(&mut command).unwrap();
-
     }
 
     pub fn ssh_protocol(&mut self) -> std::io::Result<()>{
@@ -393,9 +391,7 @@ impl SSH {
                             let clone = tx.clone();
                             thread::spawn(move ||{
                                 let mut terminal = terminal::Terminal::new(Mutex::new(clone));
-                                if terminal.handle_command() == 1 { 
-                                    exit(1); 
-                                } 
+                                terminal.handle_command();
                             });    
                             terminal_launched = false;
                         }
@@ -403,7 +399,10 @@ impl SSH {
                         print!("{}", to_print);
                         stdout().flush().unwrap();
                     }
-                    _ => println!("Could not recognize this message!"),
+                    _ => {
+                        println!("Could not recognize this message!");
+                        exit(1);
+                    } 
                 }
             }
         }  
