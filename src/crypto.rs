@@ -32,52 +32,41 @@ impl SessionKeys {
             enc_length)
     }
 
-    pub fn unseal_packets(&mut self, mut sequence_number: u32, packet: &mut Vec<u8>) -> Vec<Vec<u8>> {
+    pub fn unseal_packets(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8> {
         let mut enc_response = packet.as_mut_slice();
-        let mut decrypted_packet: Vec<Vec<u8>> = Vec::new();
+     
+        //println!("Encrypted packet: {:x?}", enc_response);
+        let (enc_response_len_slice, enc_response_slice) = enc_response.split_at_mut(4);
+        enc_response = enc_response_slice;
 
-        loop {
-            //println!("Encrypted packet: {:x?}", enc_response);
-            let (enc_response_len_slice, enc_response_slice) = enc_response.split_at_mut(4);
-            enc_response = enc_response_slice;
+        let mut enc_response_len: [u8;4] = [0;4];
+        enc_response_len.copy_from_slice(enc_response_len_slice);
 
-            let mut enc_response_len: [u8;4] = [0;4];
-            enc_response_len.copy_from_slice(enc_response_len_slice);
+        let dec_response_len_slice = self.decrypt_length(sequence_number, enc_response_len);
+        let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
 
-            let dec_response_len_slice = self.decrypt_length(sequence_number, enc_response_len);
-            let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
-
-            if dec_response_len > enc_response.len() as u32 {
-                return Vec::new();
-            }
-
-            let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
-            enc_response = enc_response_slice;
-            let (tag_slice,  enc_response_slice) = enc_response.split_at_mut(16);
-            enc_response = enc_response_slice;
-
-            let mut tag: [u8;16] = [0;16];
-            tag.copy_from_slice(tag_slice);
-
-            let mut ciphertext_in = [enc_response_len_slice, enc_payload].concat();
-            let ciphertext_in = ciphertext_in.as_mut_slice();
-
-            let dec_response = self.server_key.open_in_place(
-                sequence_number, 
-                ciphertext_in, 
-                &mut tag).unwrap();
-            //println!("Decrypted packet: {:?}", dec_response);
-
-            decrypted_packet.push([dec_response_len_slice.as_ref(), dec_response].concat());
-           
-            if enc_response.len() == 0 {
-                break;
-            } else {
-                println!("{:x?}", enc_response.to_vec());
-                sequence_number += 1;
-            }
+        if dec_response_len > enc_response.len() as u32 {
+            return Vec::new();
         }
-        decrypted_packet
+
+        let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
+        enc_response = enc_response_slice;
+        let (tag_slice,  enc_response_slice) = enc_response.split_at_mut(16);
+        enc_response = enc_response_slice;
+
+        let mut tag: [u8;16] = [0;16];
+        tag.copy_from_slice(tag_slice);
+
+        let mut ciphertext_in = [enc_response_len_slice, enc_payload].concat();
+        let ciphertext_in = ciphertext_in.as_mut_slice();
+
+        let dec_response = self.server_key.open_in_place(
+            sequence_number, 
+            ciphertext_in, 
+            &mut tag).unwrap();
+        //println!("Decrypted packet: {:?}", dec_response);
+
+        [dec_response_len_slice.as_ref(), dec_response].concat()
     }
 }
 

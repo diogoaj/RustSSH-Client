@@ -62,11 +62,30 @@ impl Session {
         let result= r.fill_buf();
         let mut received_data: Vec<u8> = Vec::new();
 
-        if result.is_ok() {
-            received_data = result.unwrap().to_vec();
+        if result.is_ok() && self.encrypted == false {
             self.server_sequence_number += 1;
+            received_data = result.unwrap().to_vec();
             r.consume(received_data.len());
-        } 
+        } else if result.is_ok() && self.encrypted == true {
+            self.server_sequence_number += 1;
+            received_data = result.unwrap().to_vec();
+            r.consume(received_data.len());
+
+            let mut dec_length_slice = [0u8;4];
+            dec_length_slice.copy_from_slice(&received_data[0..4]);
+
+            let dec_length = self.decrypt_packet_length(dec_length_slice);
+
+            while u32::from_be_bytes(dec_length) > received_data.len() as u32 {
+                let mut buf = [0u8;8192];
+                match self.reader.get_mut().read(&mut buf) {
+                    Ok(size) => received_data.append(&mut buf[..size].to_vec()),
+                    Err(_) => continue,
+                }
+            }
+
+            return self.decrypt_packet(&mut received_data);
+        }
 
         received_data
     }
@@ -78,19 +97,17 @@ impl Session {
         self.client_sequence_number += 1;
         w.flush()
     }
+    
+    pub fn decrypt_packet_length(&mut self, enc_length: [u8;4]) -> [u8;4] {
+        self.session_keys.as_mut().unwrap().decrypt_length(self.server_sequence_number, enc_length)
+    }
 
     pub fn encrypt_packet(&mut self, packet: &mut Vec<u8>) {
         self.session_keys.as_mut().unwrap().seal_packet(self.client_sequence_number, packet);
     }
 
-    pub fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<Vec<u8>> {
+    pub fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
         let vec = self.session_keys.as_mut().unwrap().unseal_packets(self.server_sequence_number, packet);
-
-        match vec.len() {
-            0 => self.server_sequence_number += 0,
-            _ => self.server_sequence_number += (vec.len() - 1) as u32
-        }
-
         vec
     }
 
