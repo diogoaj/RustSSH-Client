@@ -16,7 +16,6 @@ pub struct SSH{
     received_ciphers: Vec<u8>,
     server_host_key: Vec<u8>,
     server_signature: Vec<u8>, 
-    session_keys: Option<crypto::SessionKeys>
 }
 
 impl SSH {
@@ -28,7 +27,6 @@ impl SSH {
             received_ciphers: Vec::new(),
             server_host_key: Vec::new(),
             server_signature: Vec::new(),
-            session_keys: None
         }
     }
 
@@ -101,13 +99,15 @@ impl SSH {
         self.client_session.pad_data(&mut client_public_key);
         self.client_session.write_to_server(&client_public_key).unwrap();
 
-        let mut received_ecdh: Vec<u8> = self.client_session.read_from_server();
+        let mut received_ecdh= self.client_session.read_from_server();
+
         loop {
-            if received_ecdh.len() != 0 {break;}
+            if received_ecdh.len() != 0 { break;}
             received_ecdh = self.client_session.read_from_server();
         }
 
-        let (_size, received_ecdh) = received_ecdh.split_at(4);
+        let received = received_ecdh.remove(0);
+        let (_size, received_ecdh) = received.split_at(4);
         let (_pad, received_ecdh) = received_ecdh.split_at(1);
         let (_code, received_ecdh) = received_ecdh.split_at(1);
 
@@ -173,7 +173,6 @@ impl SSH {
 
         self.client_session.pad_data(&mut new_keys);
         self.client_session.write_to_server(&new_keys).unwrap();
-
         self.client_session.encrypted = true;
     }
 
@@ -184,7 +183,7 @@ impl SSH {
         service_request.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
         self.client_session.pad_data(&mut service_request);
-        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut service_request);
+        self.client_session.encrypt_packet(&mut service_request);
         self.client_session.write_to_server(&mut service_request).unwrap();
     }
 
@@ -202,7 +201,7 @@ impl SSH {
         password_auth.append(&mut password.as_bytes().to_vec());
 
         self.client_session.pad_data(&mut password_auth);
-        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut password_auth);
+        self.client_session.encrypt_packet(&mut password_auth);
         self.client_session.write_to_server(&mut password_auth).unwrap();
     }
 
@@ -216,7 +215,7 @@ impl SSH {
         open_request.append(&mut (16384 as u32).to_be_bytes().to_vec());
 
         self.client_session.pad_data(&mut open_request);
-        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut open_request);
+        self.client_session.encrypt_packet(&mut open_request);
         self.client_session.write_to_server(&mut open_request).unwrap();
     }
 
@@ -241,7 +240,7 @@ impl SSH {
         channel_request.push(0);
 
         self.client_session.pad_data(&mut channel_request);
-        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut channel_request);
+        self.client_session.encrypt_packet(&mut channel_request);
         self.client_session.write_to_server(&mut channel_request).unwrap();
     }
 
@@ -254,7 +253,7 @@ impl SSH {
         channel_request.push(1);
 
         self.client_session.pad_data(&mut channel_request);
-        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut channel_request);
+        self.client_session.encrypt_packet(&mut channel_request);
         self.client_session.write_to_server(&mut channel_request).unwrap();
     }
 
@@ -266,7 +265,7 @@ impl SSH {
         command.push(key);
     
         self.client_session.pad_data(&mut command);
-        self.session_keys.as_ref().unwrap().seal_packet(&mut self.client_session, &mut command);
+        self.client_session.encrypt_packet(&mut command);
         self.client_session.write_to_server(&mut command).unwrap();
     }
 
@@ -280,25 +279,19 @@ impl SSH {
 
         // Main loop
         loop {
-            let mut queue: Vec<Vec<u8>> = Vec::new();
-            let data = self.client_session.read_from_server();
-            if data.len() > 0 {
-                queue.push(data);
-
-                // Decrypt packets if session is encrypted
-                if self.client_session.encrypted {
-                    queue = self.session_keys.as_ref().unwrap().unseal_packets(
-                        &mut self.client_session, 
-                        &mut queue[0]);
-                    }
-            } else {
+            let mut queue = self.client_session.read_from_server();
+            
+            // If data is read, add to queue
+            if queue.len() == 0 {
+                // If not, receive input from user
                 let result = rx.try_recv();
                 match result {
                     Ok(ch) => self.handle_key(ch),
                     Err(_) => (),
                 }
-            }
-            
+                continue;
+            } 
+
             for packet in queue {
                 let (_, data_no_size) = packet.split_at(4);
                 let (_padding, data_no_size) = data_no_size.split_at(1);
@@ -307,7 +300,7 @@ impl SSH {
                 match code[0] {
                     constants::Message::SSH_MSG_KEXINIT => {
                         //println!("[+] Received Code {}", constants::Message::SSH_MSG_KEXINIT);
-                        self.algorithm_exchange(packet.to_vec());
+                        self.algorithm_exchange(packet);
                         let (mut k_s, mut e, mut f, mut k) = self.key_exchange();
 
                         // Make Session ID 
@@ -331,7 +324,7 @@ impl SSH {
                         
                         let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut self.client_session.session_id);
                         let session_keys = crypto::SessionKeys::new(keys);
-                        self.session_keys = Some(session_keys);
+                        self.client_session.session_keys = Some(session_keys);
                         self.service_request_message();
                         }
                     constants::Message::SSH_MSG_SERVICE_ACCEPT => {
@@ -350,7 +343,7 @@ impl SSH {
                     constants::Message::SSH_MSG_GLOBAL_REQUEST => {
                         // Handle host key check upon receiving -> hostkeys-00@openssh.com
                         // Ignore for now
-                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_GLOBAL_REQUEST);
+                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_GLOBAL_REQUEST);
                     }
                     constants::Message::SSH_MSG_CHANNEL_OPEN_CONFIRMATION => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_OPEN_CONFIRMATION);
@@ -362,6 +355,7 @@ impl SSH {
                         //let (maximum_window_size, data_no_size) = data_no_size.split_at(4);
                         self.channel_request_pty();
                         self.channel_request_shell();
+                        terminal_launched = true;
                     }
                     constants::Message::SSH_MSG_CHANNEL_OPEN_FAILURE => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_OPEN_FAILURE);
@@ -373,8 +367,7 @@ impl SSH {
                         println!("Channel open succeeded.");
                         //let (size, data_no_size) = data_no_size.split_at(4);
                         //let size = u32::from_be_bytes(size.try_into().unwrap());
-                        //let (recipient_channel, data_no_size) = data_no_size.split_at(4);
-                        terminal_launched = true;
+                        //let (recipient_channel, data_no_size) = data_no_size.split_at(4);    
                     }
                     constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
                         // Figure this out later

@@ -1,5 +1,4 @@
 use ring::{aead::chacha20_poly1305_openssh, digest};
-use crate::session::Session;
 
 pub struct SessionKeys {
     pub client_key: chacha20_poly1305_openssh::SealingKey,
@@ -19,66 +18,51 @@ impl SessionKeys {
         }
     }
 
-    pub fn seal_packet(&self, client_session: &mut Session, packet: &mut Vec<u8>) -> Vec<u8>{
+    pub fn seal_packet(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8>{
         let mut tag: [u8;16] = [0;16];
-        self.client_key.seal_in_place(client_session.client_sequence_number, packet, &mut tag);
+        self.client_key.seal_in_place(sequence_number, packet, &mut tag);
 
         packet.append(&mut tag.to_vec());
         packet.clone()
     }
 
-    pub fn unseal_packets(&self, client_session: &mut Session, packets: &mut Vec<u8>) -> Vec<Vec<u8>>{
-        let mut enc_response = packets.as_mut_slice();
+    pub fn decrypt_length(&mut self, sequence_number: u32, enc_length: [u8;4]) -> [u8;4] {
+        self.server_key.decrypt_packet_length(
+            sequence_number, 
+            enc_length)
+    }
 
-        let mut responses: Vec<Vec<u8>> = Vec::new();
+    pub fn unseal_packets(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8> {
+        let mut enc_response = packet.as_mut_slice();
+     
+        //println!("Encrypted packet: {:x?}", enc_response);
+        let (enc_response_len_slice, enc_response_slice) = enc_response.split_at_mut(4);
+        enc_response = enc_response_slice;
 
-        loop {
-            //println!("Encrypted packet: {:x?}", enc_response);
+        let mut enc_response_len: [u8;4] = [0;4];
+        enc_response_len.copy_from_slice(enc_response_len_slice);
 
-            let (enc_response_len_slice, enc_response_slice) = enc_response.split_at_mut(4);
-            enc_response = enc_response_slice;
+        let dec_response_len_slice = self.decrypt_length(sequence_number, enc_response_len);
+        let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
 
-            let mut enc_response_len: [u8;4] = [0;4];
-            enc_response_len.copy_from_slice(enc_response_len_slice);
+        let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
+        enc_response = enc_response_slice;
+        let (tag_slice,  enc_response_slice) = enc_response.split_at_mut(16);
+        enc_response = enc_response_slice;
 
-            let dec_response_len_slice = 
-                self.server_key.decrypt_packet_length(
-                    client_session.server_sequence_number, 
-                    enc_response_len
-                );
+        let mut tag: [u8;16] = [0;16];
+        tag.copy_from_slice(tag_slice);
 
-            let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
+        let mut ciphertext_in = [enc_response_len_slice, enc_payload].concat();
+        let ciphertext_in = ciphertext_in.as_mut_slice();
 
-            //println!("Length {:x?}", dec_response_len);
+        let dec_response = self.server_key.open_in_place(
+            sequence_number, 
+            ciphertext_in, 
+            &mut tag).unwrap();
+        //println!("Decrypted packet: {:?}", dec_response);
 
-            let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
-            enc_response = enc_response_slice;
-            let (tag_slice,  enc_response_slice) = enc_response.split_at_mut(16);
-            enc_response = enc_response_slice;
-
-            let mut tag: [u8;16] = [0;16];
-            tag.copy_from_slice(tag_slice);
-
-            let mut ciphertext_in = [enc_response_len_slice, enc_payload].concat();
-            let ciphertext_in = ciphertext_in.as_mut_slice();
-
-            let dec_response = self.server_key.open_in_place(
-                client_session.server_sequence_number, 
-                ciphertext_in, 
-                &mut tag).unwrap();
-
-            //println!("Decrypted packet: {:?}", dec_response);
-
-            responses.push([dec_response_len_slice.to_vec(), dec_response.to_vec()].concat());
-      
-            if enc_response.len() == 0 {
-                break;
-            } else {
-                client_session.server_sequence_number += 1;
-            }
-        }
-
-        responses
+        [dec_response_len_slice.as_ref(), dec_response].concat()
     }
 }
 

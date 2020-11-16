@@ -14,6 +14,7 @@ pub struct Session {
     pub session_id: Vec<u8>,
     pub data_sent: u32,
     pub encrypted: bool,
+    pub session_keys: Option<crypto::SessionKeys>
 }
 
 impl Session {
@@ -30,6 +31,7 @@ impl Session {
             session_id: Vec::new(),
             data_sent: 0,
             encrypted: false,
+            session_keys: None,
 
         })
     }
@@ -55,18 +57,53 @@ impl Session {
         Ok(())
     }
 
-    pub fn read_from_server(&mut self) -> Vec<u8> {
+    pub fn read_from_server(&mut self) -> Vec<Vec<u8>> {
         let r = self.reader.get_mut();
         let result= r.fill_buf();
         let mut received_data: Vec<u8> = Vec::new();
 
-        if result.is_ok() {
-            received_data = result.unwrap().to_vec();
+        if result.is_ok() && self.encrypted == false {
             self.server_sequence_number += 1;
-        } 
+            received_data = result.unwrap().to_vec();
+            r.consume(received_data.len());
 
-        r.consume(received_data.len());
-        received_data
+            let mut packet = Vec::new();
+            packet.push(received_data);
+            return packet;
+        } else if result.is_ok() && self.encrypted == true {
+            self.server_sequence_number += 1;
+            received_data = result.unwrap().to_vec();
+            r.consume(received_data.len());
+
+            let mut decrypted_packets: Vec<Vec<u8>> = Vec::new();
+
+            while received_data.len() != 0 {
+                let mut enc_length_slice = [0u8;4];
+                enc_length_slice.copy_from_slice(&received_data[0..4]);
+    
+                let dec_length_slice = self.decrypt_packet_length(enc_length_slice);
+                let dec_length = u32::from_be_bytes(dec_length_slice);
+
+                if received_data.len() >= (dec_length + 20) as usize {
+                    decrypted_packets.push(self.decrypt_packet(&mut received_data[..(dec_length+20) as usize].to_vec()));
+                    received_data.drain(..(dec_length+20) as usize);
+                    self.server_sequence_number += 1;
+                }
+
+                if received_data.len() == 0 { self.server_sequence_number -= 1; return decrypted_packets; }
+
+                let mut buf = [0u8;8192];
+                match self.reader.get_mut().read(&mut buf) {
+                    Ok(size) => {
+                        received_data.append(&mut buf[..size].to_vec());
+                    } 
+                    Err(_) => continue,
+                }
+            }
+            self.server_sequence_number -= 1;
+            return decrypted_packets;
+        }
+        Vec::new()
     }
 
     pub fn write_to_server(&mut self, data: &Vec<u8>) -> Result<()> {
@@ -75,6 +112,19 @@ impl Session {
         w.write(data.as_slice())?;
         self.client_sequence_number += 1;
         w.flush()
+    }
+    
+    pub fn decrypt_packet_length(&mut self, enc_length: [u8;4]) -> [u8;4] {
+        self.session_keys.as_mut().unwrap().decrypt_length(self.server_sequence_number, enc_length)
+    }
+
+    pub fn encrypt_packet(&mut self, packet: &mut Vec<u8>) {
+        self.session_keys.as_mut().unwrap().seal_packet(self.client_sequence_number, packet);
+    }
+
+    pub fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
+        let vec = self.session_keys.as_mut().unwrap().unseal_packets(self.server_sequence_number, packet);
+        vec
     }
 
     pub fn pad_data(&self, data: &mut Vec<u8>) {
