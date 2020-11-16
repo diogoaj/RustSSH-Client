@@ -32,12 +32,12 @@ impl SessionKeys {
             enc_length)
     }
 
-    pub fn unseal_packets(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8> {
-        let mut enc_response = packet.as_mut_slice();
+    pub fn unseal_packet(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8> {
+        let enc_response = packet.as_mut_slice();
      
         //println!("Encrypted packet: {:x?}", enc_response);
-        let (enc_response_len_slice, enc_response_slice) = enc_response.split_at_mut(4);
-        enc_response = enc_response_slice;
+        
+        let (enc_response_len_slice, enc_response) = enc_response.split_at_mut(4);
 
         let mut enc_response_len: [u8;4] = [0;4];
         enc_response_len.copy_from_slice(enc_response_len_slice);
@@ -45,10 +45,8 @@ impl SessionKeys {
         let dec_response_len_slice = self.decrypt_length(sequence_number, enc_response_len);
         let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
 
-        let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
-        enc_response = enc_response_slice;
-        let (tag_slice,  enc_response_slice) = enc_response.split_at_mut(16);
-        enc_response = enc_response_slice;
+        let (enc_payload, enc_response) = enc_response.split_at_mut(dec_response_len as usize);
+        let (tag_slice,  _) = enc_response.split_at_mut(16);
 
         let mut tag: [u8;16] = [0;16];
         tag.copy_from_slice(tag_slice);
@@ -60,6 +58,7 @@ impl SessionKeys {
             sequence_number, 
             ciphertext_in, 
             &mut tag).unwrap();
+
         //println!("Decrypted packet: {:?}", dec_response);
 
         [dec_response_len_slice.as_ref(), dec_response].concat()

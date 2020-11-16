@@ -60,11 +60,10 @@ impl Session {
     pub fn read_from_server(&mut self) -> Vec<Vec<u8>> {
         let r = self.reader.get_mut();
         let result= r.fill_buf();
-        let mut received_data: Vec<u8> = Vec::new();
 
         if result.is_ok() && self.encrypted == false {
             self.server_sequence_number += 1;
-            received_data = result.unwrap().to_vec();
+            let received_data = result.unwrap().to_vec();
             r.consume(received_data.len());
 
             let mut packet = Vec::new();
@@ -72,7 +71,7 @@ impl Session {
             return packet;
         } else if result.is_ok() && self.encrypted == true {
             self.server_sequence_number += 1;
-            received_data = result.unwrap().to_vec();
+            let mut received_data = result.unwrap().to_vec();
             r.consume(received_data.len());
 
             let mut decrypted_packets: Vec<Vec<u8>> = Vec::new();
@@ -123,7 +122,7 @@ impl Session {
     }
 
     pub fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
-        let vec = self.session_keys.as_mut().unwrap().unseal_packets(self.server_sequence_number, packet);
+        let vec = self.session_keys.as_mut().unwrap().unseal_packet(self.server_sequence_number, packet);
         vec
     }
 

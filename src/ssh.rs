@@ -36,7 +36,6 @@ impl SSH {
         let stdin = stdin();
         let mut stdin = stdin.lock();
 
-        println!("[+] Password authentication");
         stdout.write_all(b"password: ").unwrap();
         stdout.flush().unwrap();
         let password = stdin.read_passwd(&mut stdout).unwrap().unwrap();
@@ -269,6 +268,16 @@ impl SSH {
         self.client_session.write_to_server(&mut command).unwrap();
     }
 
+    fn close_channel(&mut self) {
+        let mut close: Vec<u8> = Vec::new();
+        close.push(constants::Message::SSH_MSG_CHANNEL_CLOSE);
+        close.append(&mut (0 as u32).to_be_bytes().to_vec());
+    
+        self.client_session.pad_data(&mut close);
+        self.client_session.encrypt_packet(&mut close);
+        self.client_session.write_to_server(&mut close).unwrap();
+    }
+
     pub fn ssh_protocol(&mut self) -> std::io::Result<()>{
         let (tx, rx) = mpsc::channel();
         let mut terminal_launched = false;
@@ -279,9 +288,8 @@ impl SSH {
 
         // Main loop
         loop {
-            let mut queue = self.client_session.read_from_server();
+            let queue = self.client_session.read_from_server();
             
-            // If data is read, add to queue
             if queue.len() == 0 {
                 // If not, receive input from user
                 let result = rx.try_recv();
@@ -332,6 +340,12 @@ impl SSH {
                         let (size, data_no_size) = data_no_size.split_at(4);
                         let size = u32::from_be_bytes(size.try_into().unwrap());
                         println!("{}", str::from_utf8(&data_no_size[..size as usize]).unwrap());
+                        let password = self.get_password();
+                        self.password_authentication(self.username.clone(), password);
+                    }
+                    constants::Message::SSH_MSG_USERAUTH_FAILURE => {
+                        println!("[+] Authentication failed!");
+                        println!("Try again.");
                         let password = self.get_password();
                         self.password_authentication(self.username.clone(), password);
                     }
@@ -392,8 +406,23 @@ impl SSH {
                         print!("{}", to_print);
                         stdout().flush().unwrap();
                     }
+                    constants::Message::SSH_MSG_CHANNEL_EOF => {
+                        //println!("[+] Received Code: {}", constants::Message::Message::SSH_MSG_CHANNEL_EOF);
+                        println!("Server will not send more data!");
+                    }
+                    constants::Message::SSH_MSG_CHANNEL_REQUEST => {}
+                    constants::Message::SSH_MSG_CHANNEL_CLOSE => {
+                        self.close_channel();
+                        println!("Connection closed.");
+                        exit(0);
+                    }
+                    constants::Message::SSH_MSG_DISCONNECT => {
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_DISCONNECT);
+                        println!("Server disconnected...");
+                        exit(1);
+                    }
                     _ => {
-                        println!("Could not recognize this message!");
+                        println!("Could not recognize this message -> {}", code[0]);
                         exit(1);
                     } 
                 }
