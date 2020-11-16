@@ -14,6 +14,7 @@ pub struct Session {
     pub session_id: Vec<u8>,
     pub data_sent: u32,
     pub encrypted: bool,
+    pub session_keys: Option<crypto::SessionKeys>
 }
 
 impl Session {
@@ -30,6 +31,7 @@ impl Session {
             session_id: Vec::new(),
             data_sent: 0,
             encrypted: false,
+            session_keys: None,
 
         })
     }
@@ -63,9 +65,9 @@ impl Session {
         if result.is_ok() {
             received_data = result.unwrap().to_vec();
             self.server_sequence_number += 1;
+            r.consume(received_data.len());
         } 
 
-        r.consume(received_data.len());
         received_data
     }
 
@@ -75,6 +77,21 @@ impl Session {
         w.write(data.as_slice())?;
         self.client_sequence_number += 1;
         w.flush()
+    }
+
+    pub fn encrypt_packet(&mut self, packet: &mut Vec<u8>) {
+        self.session_keys.as_mut().unwrap().seal_packet(self.client_sequence_number, packet);
+    }
+
+    pub fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<Vec<u8>> {
+        let vec = self.session_keys.as_mut().unwrap().unseal_packets(self.server_sequence_number, packet);
+
+        match vec.len() {
+            0 => self.server_sequence_number += 0,
+            _ => self.server_sequence_number += (vec.len() - 1) as u32
+        }
+
+        vec
     }
 
     pub fn pad_data(&self, data: &mut Vec<u8>) {
