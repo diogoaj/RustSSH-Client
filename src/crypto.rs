@@ -45,10 +45,6 @@ impl SessionKeys {
         let dec_response_len_slice = self.decrypt_length(sequence_number, enc_response_len);
         let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
 
-        if dec_response_len > enc_response.len() as u32 {
-            return Vec::new();
-        }
-
         let (enc_payload, enc_response_slice) = enc_response.split_at_mut(dec_response_len as usize);
         enc_response = enc_response_slice;
         let (tag_slice,  enc_response_slice) = enc_response.split_at_mut(16);

@@ -23,7 +23,7 @@ impl Terminal{
                     command.push(c);
                     self.tx.try_lock().unwrap().send(c as u8).unwrap();
                     if c == '\n' { 
-                        if command.trim() == "exit\n" || command.trim() == "logout\n" { break; }
+                        if command== "exit\n" || command == "logout\n" { break; }
                         command.clear();
                     }
                 }
