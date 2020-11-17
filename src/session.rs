@@ -20,7 +20,10 @@ pub struct Session {
 impl Session {
     pub fn new(host: IpAddr, port: u16) -> Result<Self> {
         let socket = SocketAddr::new(host, port);
-        let stream = TcpStream::connect(socket).unwrap();
+        let stream = match TcpStream::connect(socket) {
+            Ok(stream) => stream,
+            Err(e) => panic!("{}: Couldn't connect to {} at port {}", e, host, port),
+        };
         stream.set_nonblocking(true).unwrap();
         Ok(Session {
             reader: Cell::new(BufReader::new(stream.try_clone()?)),

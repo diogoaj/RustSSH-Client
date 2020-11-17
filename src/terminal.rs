@@ -18,19 +18,21 @@ impl Terminal{
 
         for c in stdin.keys() {
             match c.unwrap() {
-                Key::Ctrl('c') => self.tx.try_lock().unwrap().send(vec![0x03]).unwrap(),
-                Key::Ctrl('l') => self.tx.try_lock().unwrap().send(vec![0x0c]).unwrap(),
+                Key::Ctrl(c) => self.tx.try_lock().unwrap().send(vec![(c as u8) - 96]).unwrap(),
                 Key::Char(c) => {
                     command.push(c);
                     self.tx.try_lock().unwrap().send(vec![c as u8]).unwrap();
                     if c == '\n' { 
+                        // TODO - Remove whitespaces from command to exit properly
                         if command == "exit\n" || command == "logout\n" { break; }
                         command.clear();
                     }
                 }
                 Key::Backspace => self.tx.try_lock().unwrap().send(vec![0x7f]).unwrap(),
                 Key::Up => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x41]).unwrap(),
-                Key::Down => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x42]).unwrap(),
+                Key::Down => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x42]).unwrap(),     
+                Key::Right => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x43]).unwrap(),
+                Key::Left => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x44]).unwrap(),
                 _ => {}
             }  
         }

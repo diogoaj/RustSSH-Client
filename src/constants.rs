@@ -7,6 +7,14 @@ impl Strings {
     pub const PASSWORD: &'static str = "password";
     pub const SESSION: &'static str = "session";
     pub const SHELL: &'static str = "shell";
+    pub const PTY_REQ: &'static str = "pty-req";
+    pub const XTERM_VAR: &'static str = "xterm-256color";
+}
+
+pub struct Size;
+
+impl Size {
+    pub const ONE_GB: u32 = 1073741824;
 }
 
 pub struct Message;

@@ -16,6 +16,7 @@ impl Kex{
         }
     }
 
+    // TODO - Refactor this
     pub fn generate_public_key(&self) -> Vec<u8>{
         let public_key = PublicKey::from(&self.private_key);
         let pub_key = public_key.as_bytes();

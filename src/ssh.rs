@@ -222,11 +222,11 @@ impl SSH {
         let mut channel_request: Vec<u8> = Vec::new();
         channel_request.push(constants::Message::SSH_MSG_CHANNEL_REQUEST);
         channel_request.append(&mut (0 as u32).to_be_bytes().to_vec());
-        channel_request.append(&mut (7 as u32).to_be_bytes().to_vec());
-        channel_request.append(&mut "pty-req".as_bytes().to_vec());
+        channel_request.append(&mut (constants::Strings::PTY_REQ.len() as u32).to_be_bytes().to_vec());
+        channel_request.append(&mut constants::Strings::PTY_REQ.as_bytes().to_vec());
         channel_request.push(0);
-        channel_request.append(&mut (14 as u32).to_be_bytes().to_vec());
-        channel_request.append(&mut "xterm-256color".as_bytes().to_vec());
+        channel_request.append(&mut (constants::Strings::XTERM_VAR.len() as u32).to_be_bytes().to_vec());
+        channel_request.append(&mut constants::Strings::XTERM_VAR.as_bytes().to_vec());
         channel_request.append(&mut (0x7e as u32).to_be_bytes().to_vec());
         channel_request.append(&mut (0x1e as u32).to_be_bytes().to_vec());
         channel_request.append(&mut (0 as u32).to_be_bytes().to_vec());
@@ -288,30 +288,41 @@ impl SSH {
 
         // Main loop
         loop {
+            // If no data is read then queue is empty
             let queue = self.client_session.read_from_server();
-            
-            if queue.len() == 0 {
-                // Receive input from user if no data to process
+
+            // Process key strokes 
+            let result = rx.try_recv();
+            match result {
+                Ok(vec) => self.handle_key(vec),
+                Err(_) => (),
+            }
+              
+            for packet in queue {
+                // To give a chance to process special input 
+                // while processing packets
                 let result = rx.try_recv();
                 match result {
                     Ok(vec) => self.handle_key(vec),
                     Err(_) => (),
                 }
-                continue;
-            } 
-
-            for packet in queue {
+                
                 let (_, data_no_size) = packet.split_at(4);
                 let (_padding, data_no_size) = data_no_size.split_at(1);
                 let (code, data_no_size) = data_no_size.split_at(1);
 
+                // Process each packet by matching the message code
                 match code[0] {
                     constants::Message::SSH_MSG_KEXINIT => {
                         //println!("[+] Received Code {}", constants::Message::SSH_MSG_KEXINIT);
+                        // Algorithm exchange
+                        // TODO - Check if client and server algorithms match
                         self.algorithm_exchange(packet);
                         let (mut k_s, mut e, mut f, mut k) = self.key_exchange();
 
                         // Make Session ID 
+                        // TODO - Change this when implementing rekey 
+                        // Note: Rekey should be triggered every 1GB or every hour
                         self.client_session.make_session_id(
                             &digest::SHA256, 
                             server_protocol_string.clone(), 
@@ -322,6 +333,7 @@ impl SSH {
                             &mut f, 
                             &mut k.clone());
                             
+                        // TODO - To refactor signature related methods
                         let mut signature_fixed_slice: [u8;64] = [0;64];
                         signature_fixed_slice.copy_from_slice(self.server_signature.as_slice());
                         let ed25519_signature = ed25519_dalek::Signature::new(signature_fixed_slice);
@@ -333,13 +345,16 @@ impl SSH {
                         let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut self.client_session.session_id);
                         let session_keys = crypto::SessionKeys::new(keys);
                         self.client_session.session_keys = Some(session_keys);
+                        // Request authentication
                         self.service_request_message();
                         }
                     constants::Message::SSH_MSG_SERVICE_ACCEPT => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_SERVICE_ACCEPT);
                         let (size, data_no_size) = data_no_size.split_at(4);
                         let size = u32::from_be_bytes(size.try_into().unwrap());
-                        println!("{}", str::from_utf8(&data_no_size[..size as usize]).unwrap());
+                        //println!("{}", str::from_utf8(&data_no_size[..size as usize]).unwrap());
+                        // Password authentication
+                        // TODO - Implement other types of authentication (keys)
                         let password = self.get_password();
                         self.password_authentication(self.username.clone(), password);
                     }
@@ -355,7 +370,7 @@ impl SSH {
                         self.open_channel();
                     }
                     constants::Message::SSH_MSG_GLOBAL_REQUEST => {
-                        // Handle host key check upon receiving -> hostkeys-00@openssh.com
+                        // TODO - Handle host key check upon receiving -> hostkeys-00@openssh.com
                         // Ignore for now
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_GLOBAL_REQUEST);
                     }
@@ -367,6 +382,8 @@ impl SSH {
                         //let (sender_channel, data_no_size) = data_no_size.split_at(4);
                         //let (initial_window_size, data_no_size) = data_no_size.split_at(4);
                         //let (maximum_window_size, data_no_size) = data_no_size.split_at(4);
+
+                        // Request pseudo terminal / shell
                         self.channel_request_pty();
                         self.channel_request_shell();
                         terminal_launched = true;
@@ -392,8 +409,13 @@ impl SSH {
                         let (_recipient_channel, data_no_size) = data_no_size.split_at(4);
                         let (data_size, data_no_size) = data_no_size.split_at(4);
                         let data_size = u32::from_be_bytes(data_size.try_into().unwrap());
-                        let to_print = str::from_utf8(&data_no_size[..data_size as usize]).unwrap();
+                        // Return empty string here if chars are not UTF-8
+                        let to_print = match str::from_utf8(&data_no_size[..data_size as usize]) {
+                            Ok(s) => s,
+                            Err(_) => "",
+                        };
 
+                        // Launch thread that processes key strokes
                         if terminal_launched == true {
                             let clone = tx.clone();
                             thread::spawn(move ||{
@@ -403,6 +425,7 @@ impl SSH {
                             terminal_launched = false;
                         }
 
+                        // Print data received to screen
                         print!("{}", to_print);
                         stdout().flush().unwrap();
                     }
@@ -413,6 +436,7 @@ impl SSH {
                     constants::Message::SSH_MSG_CHANNEL_REQUEST => {}
                     constants::Message::SSH_MSG_IGNORE => {}
                     constants::Message::SSH_MSG_CHANNEL_CLOSE => {
+                        // Issue close channel packet
                         self.close_channel();
                         println!("Connection closed.");
                         exit(0);
