@@ -256,12 +256,12 @@ impl SSH {
         self.client_session.write_to_server(&mut channel_request).unwrap();
     }
 
-    fn handle_key(&mut self, key: u8) {
+    fn handle_key(&mut self, key: Vec<u8>) {
         let mut command: Vec<u8> = Vec::new();
         command.push(constants::Message::SSH_MSG_CHANNEL_DATA);
         command.append(&mut (0 as u32).to_be_bytes().to_vec());
-        command.append(&mut (1 as u32).to_be_bytes().to_vec());
-        command.push(key);
+        command.append(&mut (key.len() as u32).to_be_bytes().to_vec());
+        command.append(&mut key.to_vec());
     
         self.client_session.pad_data(&mut command);
         self.client_session.encrypt_packet(&mut command);
@@ -291,10 +291,10 @@ impl SSH {
             let queue = self.client_session.read_from_server();
             
             if queue.len() == 0 {
-                // If not, receive input from user
+                // Receive input from user if no data to process
                 let result = rx.try_recv();
                 match result {
-                    Ok(ch) => self.handle_key(ch),
+                    Ok(vec) => self.handle_key(vec),
                     Err(_) => (),
                 }
                 continue;
@@ -357,7 +357,7 @@ impl SSH {
                     constants::Message::SSH_MSG_GLOBAL_REQUEST => {
                         // Handle host key check upon receiving -> hostkeys-00@openssh.com
                         // Ignore for now
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_GLOBAL_REQUEST);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_GLOBAL_REQUEST);
                     }
                     constants::Message::SSH_MSG_CHANNEL_OPEN_CONFIRMATION => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_OPEN_CONFIRMATION);
@@ -411,6 +411,7 @@ impl SSH {
                         println!("Server will not send more data!");
                     }
                     constants::Message::SSH_MSG_CHANNEL_REQUEST => {}
+                    constants::Message::SSH_MSG_IGNORE => {}
                     constants::Message::SSH_MSG_CHANNEL_CLOSE => {
                         self.close_channel();
                         println!("Connection closed.");

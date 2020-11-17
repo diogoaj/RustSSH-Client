@@ -2,11 +2,11 @@ use std::{sync::Mutex, io::stdin, io::stdout, sync::mpsc::Sender};
 use termion::input::TermRead;
 
 pub struct Terminal{
-    tx: Mutex<Sender<u8>>,
+    tx: Mutex<Sender<Vec<u8>>>,
 }
 
 impl Terminal{
-    pub fn new(tx: Mutex<Sender<u8>>) -> Terminal { Terminal { tx } }
+    pub fn new(tx: Mutex<Sender<Vec<u8>>>) -> Terminal { Terminal { tx } }
 
     pub fn handle_command(&mut self) {
         use termion::event::Key;
@@ -18,24 +18,19 @@ impl Terminal{
 
         for c in stdin.keys() {
             match c.unwrap() {
-                Key::Ctrl('c') => self.tx.try_lock().unwrap().send(0x03).unwrap(),
+                Key::Ctrl('c') => self.tx.try_lock().unwrap().send(vec![0x03]).unwrap(),
+                Key::Ctrl('l') => self.tx.try_lock().unwrap().send(vec![0x0c]).unwrap(),
                 Key::Char(c) => {
                     command.push(c);
-                    self.tx.try_lock().unwrap().send(c as u8).unwrap();
+                    self.tx.try_lock().unwrap().send(vec![c as u8]).unwrap();
                     if c == '\n' { 
-                        if command== "exit\n" || command == "logout\n" { break; }
+                        if command == "exit\n" || command == "logout\n" { break; }
                         command.clear();
                     }
                 }
-                Key::Backspace => self.tx.try_lock().unwrap().send(0x7f).unwrap(),
-                //Key::Alt(c) => print!("^{}", c),
-                //Key::Ctrl(c) => print!("*{}", c),
-                //Key::Esc => print!("ESC"),
-                //Key::Left => print!("←"),
-                //Key::Right => print!("→"),
-                //Key::Up => print!("↑"),
-                //Key::Down => print!("↓"),
-                //Key::Backspace => print!("×"),
+                Key::Backspace => self.tx.try_lock().unwrap().send(vec![0x7f]).unwrap(),
+                Key::Up => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x41]).unwrap(),
+                Key::Down => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x42]).unwrap(),
                 _ => {}
             }  
         }
