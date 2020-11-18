@@ -7,7 +7,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
 dependencies = [
  "hermit-abi",
- "libc 0.2.79",
+ "libc",
  "winapi",
 ]
 
@@ -187,7 +187,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc587bc0ec293155d5bfa6b9891ec18a1e330c234f896ea47fbada4cadbe47e6"
 dependencies = [
  "cfg-if",
- "libc 0.2.79",
+ "libc",
  "wasi",
 ]
 
@@ -212,7 +212,7 @@ version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5aca5565f760fb5b220e499d72710ed156fdb74e631659e99377d9ebfbd13ae8"
 dependencies = [
- "libc 0.2.79",
+ "libc",
 ]
 
 [[package]]
@@ -239,12 +239,6 @@ name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
-
-[[package]]
-name = "libc"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e32a70cf75e5846d53a673923498228bbec6a8624708a9ea5645f075d6276122"
 
 [[package]]
 name = "libc"
@@ -340,7 +334,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a6b1679d49b24bbfe0c803429aa1874472f50d9b363131f0e89fc356b544d03"
 dependencies = [
  "getrandom",
- "libc 0.2.79",
+ "libc",
  "rand_chacha",
  "rand_core",
  "rand_hc",
@@ -396,22 +390,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "952cd6b98c85bbc30efa1ba5783b8abf12fec8b3287ffa52605b9432313e34e4"
 dependencies = [
  "cc",
- "libc 0.2.79",
+ "libc",
  "once_cell",
  "spin",
  "untrusted",
  "web-sys",
  "winapi",
-]
-
-[[package]]
-name = "rpassword"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a9dde63c78217c24d7f16dc1d60aac012124ba29d7bfa71bda532d4de668f44"
-dependencies = [
- "libc 0.1.12",
- "termios",
 ]
 
 [[package]]
@@ -422,7 +406,6 @@ dependencies = [
  "ed25519-dalek",
  "rand",
  "ring",
- "rpassword",
  "termion",
  "x25519-dalek",
 ]
@@ -508,19 +491,10 @@ version = "1.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c22cec9d8978d906be5ac94bceb5a010d885c626c4c8855721a4dbd20e3ac905"
 dependencies = [
- "libc 0.2.79",
+ "libc",
  "numtoa",
  "redox_syscall",
  "redox_termios",
-]
-
-[[package]]
-name = "termios"
-version = "0.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75071a31761781a74d091387713756966a74ce60eea99a093a5ab3f2cccac3fe"
-dependencies = [
- "libc 0.1.12",
 ]
 
 [[package]]

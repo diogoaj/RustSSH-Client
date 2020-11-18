@@ -15,6 +15,7 @@ pub struct Size;
 
 impl Size {
     pub const ONE_GB: u32 = 1073741824;
+    pub const MAX_PACKET_SIZE: u32 = 16384;
 }
 
 pub struct Message;

@@ -12,7 +12,11 @@ pub struct Session {
     pub client_sequence_number: u32,
     pub server_sequence_number: u32,
     pub session_id: Vec<u8>,
+    pub data_received: u32,
     pub data_sent: u32,
+    pub total_data_transmitted: u32,
+    pub client_window_size: u32,
+    pub server_window_size: u32,
     pub encrypted: bool,
     pub session_keys: Option<crypto::SessionKeys>
 }
@@ -32,7 +36,11 @@ impl Session {
             client_sequence_number: 0,
             server_sequence_number: 0,
             session_id: Vec::new(),
+            data_received: 0,
             data_sent: 0,
+            total_data_transmitted: 0,
+            client_window_size: 1048576,
+            server_window_size: 0,
             encrypted: false,
             session_keys: None,
 
@@ -40,11 +48,10 @@ impl Session {
     }
 
     pub fn read_line(&mut self) -> Result<String> {
-        let r = self.reader.get_mut();
         let mut data = String::new();
 
         loop {
-            match r.read_line(&mut data) {
+            match self.reader.get_mut().read_line(&mut data) {
                 Ok(_) => break,
                 Err(_) => continue,
             }
@@ -53,29 +60,26 @@ impl Session {
     }
 
     pub fn write_line(&mut self, line: &str) -> Result<()> {
-        let w = self.writer.get_mut();
-
-        w.write(&line.as_bytes())?;
-        w.flush()?;
+        self.writer.get_mut().write(&line.as_bytes())?;
+        self.writer.get_mut().flush()?;
         Ok(())
     }
 
     pub fn read_from_server(&mut self) -> Vec<Vec<u8>> {
-        let r = self.reader.get_mut();
-        let result= r.fill_buf();
+        let mut buf = [0u8;16384];
+        let result = self.reader.get_mut().read(&mut buf);
 
         if result.is_ok() && self.encrypted == false {
             self.server_sequence_number += 1;
-            let received_data = result.unwrap().to_vec();
-            r.consume(received_data.len());
+            let received_data = buf[..result.unwrap()].to_vec();
 
             let mut packet = Vec::new();
             packet.push(received_data);
             return packet;
+
         } else if result.is_ok() && self.encrypted == true {
             self.server_sequence_number += 1;
-            let mut received_data = result.unwrap().to_vec();
-            r.consume(received_data.len());
+            let mut received_data = buf[..result.unwrap()].to_vec();
 
             let mut decrypted_packets: Vec<Vec<u8>> = Vec::new();
 
@@ -89,12 +93,13 @@ impl Session {
                 if received_data.len() >= (dec_length + 20) as usize {
                     decrypted_packets.push(self.decrypt_packet(&mut received_data[..(dec_length+20) as usize].to_vec()));
                     received_data.drain(..(dec_length+20) as usize);
+                    self.data_received += dec_length+20;
                     self.server_sequence_number += 1;
                 }
+                
+                if received_data.len() == 0 {self.server_sequence_number -= 1; return decrypted_packets; }
 
-                if received_data.len() == 0 { self.server_sequence_number -= 1; return decrypted_packets; }
-
-                let mut buf = [0u8;8192];
+                let mut buf = [0u8;16384];
                 match self.reader.get_mut().read(&mut buf) {
                     Ok(size) => {
                         received_data.append(&mut buf[..size].to_vec());
@@ -109,11 +114,9 @@ impl Session {
     }
 
     pub fn write_to_server(&mut self, data: &Vec<u8>) -> Result<()> {
-        let w = self.writer.get_mut();
-
-        w.write(data.as_slice())?;
+        self.writer.get_mut().write(data.as_slice())?;
         self.client_sequence_number += 1;
-        w.flush()
+        self.writer.get_mut().flush()
     }
     
     pub fn decrypt_packet_length(&mut self, enc_length: [u8;4]) -> [u8;4] {

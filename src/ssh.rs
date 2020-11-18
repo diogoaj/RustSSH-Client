@@ -1,4 +1,4 @@
-use std::{sync::Mutex, io::Write, io::stdin, io::stdout, net::IpAddr, process::exit, str, sync::mpsc, thread};
+use std::{sync::mpsc::Receiver, io::Write, io::stdin, io::stdout, net::IpAddr, process::exit, str, sync::Mutex, sync::mpsc, thread};
 use core::convert::TryInto;
 use rand::Rng;
 
@@ -15,7 +15,7 @@ pub struct SSH{
     ciphers: Vec<u8>,
     received_ciphers: Vec<u8>,
     server_host_key: Vec<u8>,
-    server_signature: Vec<u8>, 
+    server_signature: Vec<u8> 
 }
 
 impl SSH {
@@ -210,8 +210,8 @@ impl SSH {
         open_request.append(&mut (constants::Strings::SESSION.len() as u32).to_be_bytes().to_vec());
         open_request.append(&mut constants::Strings::SESSION.as_bytes().to_vec());
         open_request.append(&mut (1 as u32).to_be_bytes().to_vec());
-        open_request.append(&mut (1048576 as u32).to_be_bytes().to_vec());
-        open_request.append(&mut (16384 as u32).to_be_bytes().to_vec());
+        open_request.append(&mut (self.client_session.client_window_size as u32).to_be_bytes().to_vec());
+        open_request.append(&mut constants::Size::MAX_PACKET_SIZE.to_be_bytes().to_vec());
 
         self.client_session.pad_data(&mut open_request);
         self.client_session.encrypt_packet(&mut open_request);
@@ -256,16 +256,35 @@ impl SSH {
         self.client_session.write_to_server(&mut channel_request).unwrap();
     }
 
-    fn handle_key(&mut self, key: Vec<u8>) {
+    fn window_adjust(&mut self) {
+        let mut window_adjust: Vec<u8> = Vec::new();
+        window_adjust.push(constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
+        window_adjust.append(&mut (0 as u32).to_be_bytes().to_vec());
+        window_adjust.append(&mut self.client_session.client_window_size.to_be_bytes().to_vec());
+
+        self.client_session.pad_data(&mut window_adjust);
+        self.client_session.encrypt_packet(&mut window_adjust);
+        self.client_session.write_to_server(&mut window_adjust).unwrap();
+    }
+
+    fn handle_key(&mut self, mut key: Vec<u8>) {
         let mut command: Vec<u8> = Vec::new();
         command.push(constants::Message::SSH_MSG_CHANNEL_DATA);
         command.append(&mut (0 as u32).to_be_bytes().to_vec());
         command.append(&mut (key.len() as u32).to_be_bytes().to_vec());
-        command.append(&mut key.to_vec());
+        command.append(&mut key);
     
         self.client_session.pad_data(&mut command);
         self.client_session.encrypt_packet(&mut command);
         self.client_session.write_to_server(&mut command).unwrap();
+    }
+
+    fn get_key(&mut self, rx: &Receiver<Vec<u8>>) {
+        let result = rx.try_recv();
+        match result {
+            Ok(vec) => self.handle_key(vec),
+            Err(_) => (),
+        }
     }
 
     fn close_channel(&mut self) {
@@ -291,21 +310,19 @@ impl SSH {
             // If no data is read then queue is empty
             let queue = self.client_session.read_from_server();
 
-            // Process key strokes 
-            let result = rx.try_recv();
-            match result {
-                Ok(vec) => self.handle_key(vec),
-                Err(_) => (),
+            // Adjust window
+            if self.client_session.data_received >= self.client_session.client_window_size {
+                self.client_session.data_received = 0;
+                self.window_adjust();
             }
+
+            // Process key strokes 
+            self.get_key(&rx);
               
             for packet in queue {
                 // To give a chance to process special input 
                 // while processing packets
-                let result = rx.try_recv();
-                match result {
-                    Ok(vec) => self.handle_key(vec),
-                    Err(_) => (),
-                }
+                self.get_key(&rx);
                 
                 let (_, data_no_size) = packet.split_at(4);
                 let (_padding, data_no_size) = data_no_size.split_at(1);
@@ -365,7 +382,7 @@ impl SSH {
                         self.password_authentication(self.username.clone(), password);
                     }
                     constants::Message::SSH_MSG_USERAUTH_SUCCESS => {
-                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_USERAUTH_SUCCESS);
+                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_USERAUTH_SUCCESS);
                         println!("[+] Authentication succeded");
                         self.open_channel();
                     }
@@ -402,18 +419,21 @@ impl SSH {
                     }
                     constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
                         // Figure this out later
-                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
+                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
+                        let (_recipient_channel, data_no_size) = data_no_size.split_at(4);
+                        let (window_bytes, _) = data_no_size.split_at(4);
+                        
+                        let mut window_slice = [0u8;4];
+                        window_slice.copy_from_slice(window_bytes);
+
+                        self.client_session.server_window_size = u32::from_be_bytes(window_slice);
+                        
                     }
                     constants::Message::SSH_MSG_CHANNEL_DATA => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_DATA);
                         let (_recipient_channel, data_no_size) = data_no_size.split_at(4);
                         let (data_size, data_no_size) = data_no_size.split_at(4);
                         let data_size = u32::from_be_bytes(data_size.try_into().unwrap());
-                        // Return empty string here if chars are not UTF-8
-                        let to_print = match str::from_utf8(&data_no_size[..data_size as usize]) {
-                            Ok(s) => s,
-                            Err(_) => "",
-                        };
 
                         // Launch thread that processes key strokes
                         if terminal_launched == true {
@@ -426,15 +446,19 @@ impl SSH {
                         }
 
                         // Print data received to screen
-                        print!("{}", to_print);
+                        stdout().write_all(&data_no_size[..data_size as usize]).unwrap();
                         stdout().flush().unwrap();
                     }
                     constants::Message::SSH_MSG_CHANNEL_EOF => {
-                        //println!("[+] Received Code: {}", constants::Message::Message::SSH_MSG_CHANNEL_EOF);
+                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_EOF);
                         println!("Server will not send more data!");
                     }
-                    constants::Message::SSH_MSG_CHANNEL_REQUEST => {}
-                    constants::Message::SSH_MSG_IGNORE => {}
+                    constants::Message::SSH_MSG_CHANNEL_REQUEST => {
+                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_REQUEST);
+                    }
+                    constants::Message::SSH_MSG_IGNORE => {
+                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_IGNORE);
+                    }
                     constants::Message::SSH_MSG_CHANNEL_CLOSE => {
                         // Issue close channel packet
                         self.close_channel();
@@ -442,7 +466,7 @@ impl SSH {
                         exit(0);
                     }
                     constants::Message::SSH_MSG_DISCONNECT => {
-                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_DISCONNECT);
+                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_DISCONNECT);
                         println!("Server disconnected...");
                         exit(1);
                     }
