@@ -367,8 +367,8 @@ impl SSH {
                         }
                     constants::Message::SSH_MSG_SERVICE_ACCEPT => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_SERVICE_ACCEPT);
-                        let (size, data_no_size) = data_no_size.split_at(4);
-                        let size = u32::from_be_bytes(size.try_into().unwrap());
+                        //let (size, data_no_size) = data_no_size.split_at(4);
+                        //let size = u32::from_be_bytes(size.try_into().unwrap());
                         //println!("{}", str::from_utf8(&data_no_size[..size as usize]).unwrap());
                         // Password authentication
                         // TODO - Implement other types of authentication (keys)
@@ -382,8 +382,8 @@ impl SSH {
                         self.password_authentication(self.username.clone(), password);
                     }
                     constants::Message::SSH_MSG_USERAUTH_SUCCESS => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_USERAUTH_SUCCESS);
-                        println!("[+] Authentication succeded");
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_USERAUTH_SUCCESS);
+                        println!("[+] Authentication succeeded.");
                         self.open_channel();
                     }
                     constants::Message::SSH_MSG_GLOBAL_REQUEST => {
@@ -412,14 +412,14 @@ impl SSH {
                     }
                     constants::Message::SSH_MSG_CHANNEL_SUCCESS => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_SUCCESS);
-                        println!("Channel open succeeded.");
+                        println!("[+] Channel open succeeded.");
                         //let (size, data_no_size) = data_no_size.split_at(4);
                         //let size = u32::from_be_bytes(size.try_into().unwrap());
                         //let (recipient_channel, data_no_size) = data_no_size.split_at(4);    
                     }
                     constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
                         // Figure this out later
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
                         let (_recipient_channel, data_no_size) = data_no_size.split_at(4);
                         let (window_bytes, _) = data_no_size.split_at(4);
                         
@@ -450,14 +450,14 @@ impl SSH {
                         stdout().flush().unwrap();
                     }
                     constants::Message::SSH_MSG_CHANNEL_EOF => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_EOF);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_EOF);
                         println!("Server will not send more data!");
                     }
                     constants::Message::SSH_MSG_CHANNEL_REQUEST => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_REQUEST);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_REQUEST);
                     }
                     constants::Message::SSH_MSG_IGNORE => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_IGNORE);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_IGNORE);
                     }
                     constants::Message::SSH_MSG_CHANNEL_CLOSE => {
                         // Issue close channel packet
@@ -466,7 +466,7 @@ impl SSH {
                         exit(0);
                     }
                     constants::Message::SSH_MSG_DISCONNECT => {
-                        println!("[+] Received Code: {}", constants::Message::SSH_MSG_DISCONNECT);
+                        //println!("[+] Received Code: {}", constants::Message::SSH_MSG_DISCONNECT);
                         println!("Server disconnected...");
                         exit(1);
                     }
