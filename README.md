@@ -16,3 +16,13 @@ Client implementation of the SSH2 protocol in the Rust language.
 
 ### Authentication Methods:
 - password
+
+### TODO
+- [ ] Key Re-Exchange
+- [ ] Algorithm exchange checks
+- [ ] Public key fingerprint check
+- [ ] Public key authentication
+- [ ] Implement other algorithms
+- [ ] Detect Terminal window changes
+- [ ] Handle other keyboard keys
+- [ ] Other protocol related features

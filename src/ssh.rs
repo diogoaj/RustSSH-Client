@@ -219,6 +219,8 @@ impl SSH {
     }
 
     fn channel_request_pty(&mut self){
+        let terminal_size = terminal::get_terminal_size().unwrap();
+        
         let mut channel_request: Vec<u8> = Vec::new();
         channel_request.push(constants::Message::SSH_MSG_CHANNEL_REQUEST);
         channel_request.append(&mut (0 as u32).to_be_bytes().to_vec());
@@ -227,8 +229,8 @@ impl SSH {
         channel_request.push(0);
         channel_request.append(&mut (constants::Strings::XTERM_VAR.len() as u32).to_be_bytes().to_vec());
         channel_request.append(&mut constants::Strings::XTERM_VAR.as_bytes().to_vec());
-        channel_request.append(&mut (0x7e as u32).to_be_bytes().to_vec());
-        channel_request.append(&mut (0x1e as u32).to_be_bytes().to_vec());
+        channel_request.append(&mut (terminal_size.0 as u32).to_be_bytes().to_vec());
+        channel_request.append(&mut (terminal_size.1 as u32).to_be_bytes().to_vec());
         channel_request.append(&mut (0 as u32).to_be_bytes().to_vec());
         channel_request.append(&mut (0 as u32).to_be_bytes().to_vec());
         channel_request.append(&mut (11 as u32).to_be_bytes().to_vec());

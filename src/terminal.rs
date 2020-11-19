@@ -1,5 +1,6 @@
-use std::{sync::Mutex, io::stdin, io::stdout, sync::mpsc::Sender};
+use std::{io::stdin, io::stdout, sync::Mutex, sync::mpsc::Sender, io};
 use termion::input::TermRead;
+
 
 pub struct Terminal{
     tx: Mutex<Sender<Vec<u8>>>,
@@ -33,8 +34,13 @@ impl Terminal{
                 Key::Down => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x42]).unwrap(),     
                 Key::Right => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x43]).unwrap(),
                 Key::Left => self.tx.try_lock().unwrap().send(vec![0x1b, 0x5b, 0x44]).unwrap(),
+                Key::Esc => self.tx.try_lock().unwrap().send(vec![0x1b]).unwrap(),
                 _ => {}
             }  
         }
     }
+}
+
+pub fn get_terminal_size() -> io::Result<(u16, u16)>{
+    termion::terminal_size()
 }
