@@ -1,4 +1,4 @@
-use crate::{session::Session, constants};
+use crate::session::Session;
 
 use x25519_dalek::{StaticSecret, SharedSecret, PublicKey};
 use std::convert::From;
@@ -6,28 +6,17 @@ use std::convert::From;
 
 pub struct Kex {
    pub private_key: StaticSecret,
+   pub public_key: PublicKey
 }
 
 impl Kex{
     pub fn new(client: &mut Session) -> Kex {
         let private_key = StaticSecret::new(&mut client.csprng);
+        let public_key = PublicKey::from(&private_key);
         Kex {
             private_key,
+            public_key,
         }
-    }
-
-    // TODO - Refactor this
-    pub fn generate_public_key(&self) -> Vec<u8>{
-        let public_key = PublicKey::from(&self.private_key);
-        let pub_key = public_key.as_bytes();
-
-        let mut key_exchange: Vec<u8> = Vec::new();
-        key_exchange.push(constants::Message::SSH_MSG_KEX_ECDH_INIT);
-        key_exchange.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
-        key_exchange.append(&mut pub_key.to_vec());
-
-        key_exchange
- 
     }
 
     pub fn generate_shared_secret(&self, f: [u8;32]) -> SharedSecret{

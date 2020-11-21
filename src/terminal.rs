@@ -1,5 +1,7 @@
 use std::{io::stdin, io::stdout, sync::Mutex, sync::mpsc::Sender, io};
 use termion::input::TermRead;
+use termion::event::Key;
+use termion::raw::IntoRawMode;
 
 
 pub struct Terminal{
@@ -10,9 +12,6 @@ impl Terminal{
     pub fn new(tx: Mutex<Sender<Vec<u8>>>) -> Terminal { Terminal { tx } }
 
     pub fn handle_command(&mut self) {
-        use termion::event::Key;
-        use termion::raw::IntoRawMode;
-
         let stdin = stdin();
         let _stdout = stdout().into_raw_mode().unwrap();
         let mut command = String::new();

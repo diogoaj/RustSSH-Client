@@ -15,7 +15,8 @@ pub struct SSH{
     ciphers: Vec<u8>,
     received_ciphers: Vec<u8>,
     server_host_key: Vec<u8>,
-    server_signature: Vec<u8> 
+    server_signature: Vec<u8>,
+    kex_keys: Option<kex::Kex>
 }
 
 impl SSH {
@@ -27,6 +28,7 @@ impl SSH {
             received_ciphers: Vec::new(),
             server_host_key: Vec::new(),
             server_signature: Vec::new(),
+            kex_keys: None,
         }
     }
 
@@ -90,25 +92,24 @@ impl SSH {
         self.received_ciphers = received_ciphers;
     }
 
-    fn key_exchange(&mut self) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>){
-        let kex = kex::Kex::new(&mut self.client_session);
-        let mut client_public_key = kex.generate_public_key();
-        let e = &client_public_key.clone()[1..];
+    fn send_public_key(&mut self) {
+        self.kex_keys = Some(kex::Kex::new(&mut self.client_session));
+        let mut client_public_key = self.kex_keys.as_ref().unwrap().public_key.as_bytes().to_vec();
 
-        self.client_session.pad_data(&mut client_public_key);
-        self.client_session.write_to_server(&client_public_key).unwrap();
+        let mut key_exchange: Vec<u8> = Vec::new();
+        key_exchange.push(constants::Message::SSH_MSG_KEX_ECDH_INIT);
+        key_exchange.append(&mut (client_public_key.len() as u32).to_be_bytes().to_vec());
+        key_exchange.append(&mut client_public_key);
 
-        let mut received_ecdh= self.client_session.read_from_server();
+        self.client_session.pad_data(&mut key_exchange);
+        self.client_session.write_to_server(&key_exchange).unwrap();
+    }
 
-        loop {
-            if received_ecdh.len() != 0 { break;}
-            received_ecdh = self.client_session.read_from_server();
-        }
-
-        let received = received_ecdh.remove(0);
-        let (_size, received_ecdh) = received.split_at(4);
-        let (_pad, received_ecdh) = received_ecdh.split_at(1);
-        let (_code, received_ecdh) = received_ecdh.split_at(1);
+    fn key_exchange(&mut self, received_ecdh: Vec<u8>) ->  (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut e = Vec::new();
+        let pub_key = self.kex_keys.as_ref().unwrap().public_key.as_bytes();
+        e.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
+        e.append(&mut pub_key.to_vec());
 
         let (key_size_slice, received_ecdh) = received_ecdh.split_at(4);
         //let key_size = u32::from_be_bytes(key_size_slice.try_into().unwrap());
@@ -159,7 +160,7 @@ impl SSH {
 
         self.server_signature = signature.to_vec();
 
-        let secret = kex.generate_shared_secret(f);
+        let secret = self.kex_keys.as_ref().unwrap().generate_shared_secret(f);
 
         let f = [f_size_slice, f.as_ref()].concat();
 
@@ -337,8 +338,11 @@ impl SSH {
                         // Algorithm exchange
                         // TODO - Check if client and server algorithms match
                         self.algorithm_exchange(packet);
-                        let (mut k_s, mut e, mut f, mut k) = self.key_exchange();
-
+                        self.send_public_key();  
+                    }
+                    constants::Message::SSH_MSG_KEX_ECDH_REPLY => {
+                        let (mut k_s, mut e, mut f, mut k) = self.key_exchange(data_no_size.to_vec());
+                        
                         // Make Session ID 
                         // TODO - Change this when implementing rekey 
                         // Note: Rekey should be triggered every 1GB or every hour
@@ -366,7 +370,7 @@ impl SSH {
                         self.client_session.session_keys = Some(session_keys);
                         // Request authentication
                         self.service_request_message();
-                        }
+                    }
                     constants::Message::SSH_MSG_SERVICE_ACCEPT => {
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_SERVICE_ACCEPT);
                         //let (size, data_no_size) = data_no_size.split_at(4);
@@ -420,7 +424,6 @@ impl SSH {
                         //let (recipient_channel, data_no_size) = data_no_size.split_at(4);    
                     }
                     constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
-                        // Figure this out later
                         //println!("[+] Received Code: {}", constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST);
                         let (_recipient_channel, data_no_size) = data_no_size.split_at(4);
                         let (window_bytes, _) = data_no_size.split_at(4);

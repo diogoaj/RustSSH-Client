@@ -66,7 +66,7 @@ impl Session {
     }
 
     pub fn read_from_server(&mut self) -> Vec<Vec<u8>> {
-        let mut buf = [0u8;16384];
+        let mut buf = [0u8;constants::Size::MAX_PACKET_SIZE as usize];
         let result = self.reader.get_mut().read(&mut buf);
 
         if result.is_ok() && self.encrypted == false {
@@ -99,7 +99,7 @@ impl Session {
                 
                 if received_data.len() == 0 {self.server_sequence_number -= 1; return decrypted_packets; }
 
-                let mut buf = [0u8;16384];
+                let mut buf = [0u8;constants::Size::MAX_PACKET_SIZE as usize];
                 match self.reader.get_mut().read(&mut buf) {
                     Ok(size) => {
                         received_data.append(&mut buf[..size].to_vec());

@@ -164,8 +164,6 @@ pub fn make_hash(
         hash_data.append(f);
         hash_data.append(k);
 
-        //println!("{:x?}", hash_data);
-
         digest::digest(algorithm, hash_data.as_slice()).as_ref().to_vec()
 }
 
