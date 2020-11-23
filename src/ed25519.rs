@@ -13,6 +13,7 @@ fn read_hosts(ip: IpAddr, fingerprint: String) -> std::io::Result<bool> {
     let mut f = fs::OpenOptions::new()
         .create(true)
         .write(true)
+        .append(true)
         .read(true)
         .open(filename)
         .unwrap();
@@ -24,41 +25,40 @@ fn read_hosts(ip: IpAddr, fingerprint: String) -> std::io::Result<bool> {
     for line in lines {
         if line.contains(&fingerprint) {
             return Ok(true);
-        } else {
-            println!("Host is not recognized!");
-            println!("Fingerprint for ED25519 key is SHA256:{}", fingerprint);
-            print!("Are you sure you want to continue connecting (yes/no)? ");
-            stdout.flush()?;
-
-            loop {
-                let mut user_input = String::new();
-                stdin.lock().read_line(&mut user_input).unwrap();
-                match &user_input[..] {
-                    "yes\n" => { 
-                        write_fingerprint(f, ip, fingerprint)?;
-                        println!("Host added.");
-                        return Ok(true);
-                    }
-                    "no\n" => { 
-                        println!("Host could not be verified.");
-                        return Ok(false);
-                    }
-                    _ => {
-                        print!("Please type yes or no: ");
-                        stdout.flush()?;
-                    }
-                }
-            } 
         }
     }
-    Ok(false)
+
+    println!("Host is not recognized!");
+    println!("Fingerprint for ED25519 key is SHA256:{}", fingerprint);
+    print!("Are you sure you want to continue connecting (yes/no)? ");
+    stdout.flush()?;
+
+    loop {
+        let mut user_input = String::new();
+        stdin.lock().read_line(&mut user_input).unwrap();
+        match &user_input[..] {
+            "yes\n" => { 
+                write_fingerprint(f, ip, fingerprint)?;
+                println!("Host added.");
+                return Ok(true);
+            }
+            "no\n" => { 
+                println!("Host could not be verified.");
+                return Ok(false);
+            }
+            _ => {
+                print!("Please type yes or no: ");
+                stdout.flush()?;
+            }
+        }
+    } 
 }
 
 fn write_fingerprint(f: File, ip: IpAddr, fingerprint: String) -> std::io::Result<()> {
     write!(&f, "{}|{}", ip.to_string(), fingerprint)
 }
 
-pub fn get_host_key_fingerprint(ip: IpAddr, server_host_key: &Vec<u8>) -> bool {
+pub fn host_key_fingerprint_check(ip: IpAddr, server_host_key: &Vec<u8>) -> bool {
     // Get SHA256 fingerprint
     let hash = digest::digest(&digest::SHA256, server_host_key.as_slice()).as_ref().to_vec();
     let b64 = base64::encode(hash);

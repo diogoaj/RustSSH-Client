@@ -128,7 +128,7 @@ impl SSH {
 
         self.server_host_key = host_key.to_vec();
 
-        if ed25519::get_host_key_fingerprint(
+        if ed25519::host_key_fingerprint_check(
             self.host,
             &[key_algorithm_size_slice, key_name, host_key_size_slice, host_key].concat()
         ) == false {
@@ -156,7 +156,7 @@ impl SSH {
         let (signature_algo_size, signature_data) = signature_data.split_at(4);
         let signature_algo_size = u32::from_be_bytes(signature_algo_size.try_into().unwrap());
 
-        let (signature_algorithm, signature_data) = signature_data.split_at(signature_algo_size as usize);
+        let (_, signature_data) = signature_data.split_at(signature_algo_size as usize);
         
         //println!("[+] Signature Algorithm: {}", str::from_utf8(signature_algorithm).unwrap());
 
