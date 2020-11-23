@@ -8,6 +8,7 @@ mod crypto;
 mod session;
 mod kex;
 mod terminal;
+mod ed25519;
 
 #[derive(Clap)]
 struct Opts {

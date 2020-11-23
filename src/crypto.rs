@@ -75,11 +75,11 @@ pub struct Keys {
 }
 
 impl Keys {
-    pub fn new(algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>) -> Keys {
+    pub fn new(algorithm: &'static digest::Algorithm, k: &mut Vec<u8>, h: &mut Vec<u8>, session_id: &mut Vec<u8>) -> Keys {
         let mut keys: Vec<Vec<u8>> = Vec::new();
 
         for index in 65..71 {
-            keys.push(Keys::derive_key(algorithm, k, h, index, &mut h.clone()));
+            keys.push(Keys::derive_key(algorithm, k, h, index, session_id));
         }
     
         let mut keys = Keys {

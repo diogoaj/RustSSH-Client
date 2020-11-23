@@ -2,14 +2,14 @@ use std::{sync::mpsc::Receiver, io::Write, io::stdin, io::stdout, net::IpAddr, p
 use core::convert::TryInto;
 use rand::Rng;
 
-use ed25519_dalek::*;
 use ring::digest;
 
 use termion::input::TermRead;
 
-use crate::{constants, algorithms, crypto, session::Session, kex, terminal};
+use crate::{constants, algorithms, crypto, session::Session, kex, terminal, ed25519};
 
 pub struct SSH{
+    host: IpAddr,
     username: String,
     client_session: Session,
     ciphers: Vec<u8>,
@@ -22,6 +22,7 @@ pub struct SSH{
 impl SSH {
     pub fn new(username: String, host: IpAddr, port: u16) -> SSH {
         SSH { 
+            host,
             username,
             client_session: Session::new(host, port).unwrap(),
             ciphers: Vec::new(),
@@ -112,14 +113,13 @@ impl SSH {
         e.append(&mut pub_key.to_vec());
 
         let (key_size_slice, received_ecdh) = received_ecdh.split_at(4);
-        //let key_size = u32::from_be_bytes(key_size_slice.try_into().unwrap());
 
         let (key_algorithm_size_slice, received_ecdh) = received_ecdh.split_at(4);
         let key_algorithm_size = u32::from_be_bytes(key_algorithm_size_slice.try_into().unwrap());
 
         let (key_name, received_ecdh) = received_ecdh.split_at(key_algorithm_size as usize);
 
-        println!("[+] Host Key Algorithm: {}", str::from_utf8(key_name).unwrap());
+        //println!("[+] Host Key Algorithm: {}", str::from_utf8(key_name).unwrap());
 
         let (host_key_size_slice, received_ecdh) = received_ecdh.split_at(4);
         let host_key_size = u32::from_be_bytes(host_key_size_slice.try_into().unwrap());
@@ -127,6 +127,13 @@ impl SSH {
         let (host_key, received_ecdh) = received_ecdh.split_at(host_key_size as usize);
 
         self.server_host_key = host_key.to_vec();
+
+        if ed25519::get_host_key_fingerprint(
+            self.host,
+            &[key_algorithm_size_slice, key_name, host_key_size_slice, host_key].concat()
+        ) == false {
+            exit(1);
+        }
 
         let k_s = [
             key_size_slice, 
@@ -151,7 +158,7 @@ impl SSH {
 
         let (signature_algorithm, signature_data) = signature_data.split_at(signature_algo_size as usize);
         
-        println!("[+] Signature Algorithm: {}", str::from_utf8(signature_algorithm).unwrap());
+        //println!("[+] Signature Algorithm: {}", str::from_utf8(signature_algorithm).unwrap());
 
         let (signature_size, signature_data) = signature_data.split_at(4);
         let signature_size = u32::from_be_bytes(signature_size.try_into().unwrap());
@@ -356,18 +363,26 @@ impl SSH {
                             &mut f, 
                             &mut k.clone());
                             
-                        // TODO - To refactor signature related methods
-                        let mut signature_fixed_slice: [u8;64] = [0;64];
-                        signature_fixed_slice.copy_from_slice(self.server_signature.as_slice());
-                        let ed25519_signature = ed25519_dalek::Signature::new(signature_fixed_slice);
-                        let host_key_ed25519 = ed25519_dalek::PublicKey::from_bytes(self.server_host_key.as_slice()).unwrap();
+                        let verification = ed25519::verify_server_signature(
+                            &self.server_signature, 
+                            &self.server_host_key, 
+                            &self.client_session.session_id);
 
-                        println!("[+] Server's signature OK?: {:?}", host_key_ed25519.verify(self.client_session.session_id.as_slice(),  &ed25519_signature).is_ok());
-                        self.new_keys_message();
+                        if verification == false { println!("Server's signature does not match!"); exit(1); }
+
+                        let mut session_id = self.client_session.session_id.clone();
                         
-                        let keys = crypto::Keys::new(&digest::SHA256, &mut k, &mut self.client_session.session_id);
+                        let keys = crypto::Keys::new(
+                            &digest::SHA256, 
+                            &mut k, 
+                            &mut self.client_session.session_id,
+                            &mut session_id);
+
                         let session_keys = crypto::SessionKeys::new(keys);
                         self.client_session.session_keys = Some(session_keys);
+
+                        self.new_keys_message();
+
                         // Request authentication
                         self.service_request_message();
                     }
