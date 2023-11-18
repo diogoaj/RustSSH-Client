@@ -1,5 +1,6 @@
-use clap::Clap;
 use std::net::IpAddr;
+
+use clap::Parser;
 
 mod algorithms;
 mod constants;
@@ -10,7 +11,7 @@ mod session;
 mod ssh;
 mod terminal;
 
-#[derive(Clap)]
+#[derive(Parser)]
 struct Opts {
     username: String,
     ip: IpAddr,

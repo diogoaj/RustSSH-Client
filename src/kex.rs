@@ -10,7 +10,7 @@ pub struct Kex {
 
 impl Kex {
     pub fn new(client: &mut Session) -> Kex {
-        let private_key = StaticSecret::new(&mut client.csprng);
+        let private_key = StaticSecret::random_from_rng(&mut client.csprng);
         let public_key = PublicKey::from(&private_key);
         Kex {
             private_key,

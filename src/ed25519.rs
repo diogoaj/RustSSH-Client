@@ -1,9 +1,12 @@
+use std::convert::TryInto;
 use std::fs::{self, File};
 use std::io::{stdin, stdout, BufRead, Read, Write};
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use ed25519_dalek::*;
+use base64::engine::general_purpose;
+use base64::Engine;
+use ed25519_dalek::Verifier;
 use ring::digest;
 
 fn read_hosts(ip: IpAddr, fingerprint: String) -> std::io::Result<bool> {
@@ -63,7 +66,7 @@ pub fn host_key_fingerprint_check(ip: IpAddr, server_host_key: &Vec<u8>) -> bool
     let hash = digest::digest(&digest::SHA256, server_host_key.as_slice())
         .as_ref()
         .to_vec();
-    let b64 = base64::encode(hash);
+    let b64 = general_purpose::STANDARD.encode(hash);
 
     read_hosts(ip, b64).unwrap()
 }
@@ -76,9 +79,9 @@ pub fn verify_server_signature(
     let mut signature_fixed_slice: [u8; 64] = [0; 64];
     signature_fixed_slice.copy_from_slice(signature.as_slice());
 
-    let ed25519_signature = ed25519_dalek::Signature::new(signature_fixed_slice);
-    let host_key_ed25519 =
-        ed25519_dalek::PublicKey::from_bytes(server_host_key.as_slice()).unwrap();
+    let ed25519_signature = ed25519_dalek::Signature::from_bytes(&signature_fixed_slice);
+    let server_host_key_slice: &[u8; 32] = server_host_key.as_slice().try_into().unwrap();
+    let host_key_ed25519 = ed25519_dalek::VerifyingKey::from_bytes(server_host_key_slice).unwrap();
 
     host_key_ed25519
         .verify(hash_data.as_slice(), &ed25519_signature)
