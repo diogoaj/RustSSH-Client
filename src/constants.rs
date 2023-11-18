@@ -13,6 +13,7 @@ impl Strings {
 
 pub struct Size;
 
+#[allow(dead_code)]
 impl Size {
     pub const ONE_GB: u32 = 1073741824;
     pub const MAX_PACKET_SIZE: u32 = 16384;
@@ -23,27 +24,27 @@ pub struct Message;
 #[allow(dead_code)]
 impl Message {
     pub const SSH_MSG_DISCONNECT: u8 = 1;
-    pub const SSH_MSG_IGNORE: u8 = 2;   
-    pub const SSH_MSG_UNIMPLEMENTED: u8 = 3;    
+    pub const SSH_MSG_IGNORE: u8 = 2;
+    pub const SSH_MSG_UNIMPLEMENTED: u8 = 3;
     pub const SSH_MSG_DEBUG: u8 = 4;
-    pub const SSH_MSG_SERVICE_REQUEST: u8 = 5; 
+    pub const SSH_MSG_SERVICE_REQUEST: u8 = 5;
     pub const SSH_MSG_SERVICE_ACCEPT: u8 = 6;
     pub const SSH_MSG_KEXINIT: u8 = 20;
     pub const SSH_MSG_NEWKEYS: u8 = 21;
     pub const SSH_MSG_KEX_ECDH_INIT: u8 = 30;
     pub const SSH_MSG_KEX_ECDH_REPLY: u8 = 31;
     pub const SSH_MSG_USERAUTH_REQUEST: u8 = 50;
-    pub const SSH_MSG_USERAUTH_FAILURE: u8 = 51; 
-    pub const SSH_MSG_USERAUTH_SUCCESS: u8 = 52;   
-    pub const SSH_MSG_GLOBAL_REQUEST: u8 = 80;    
+    pub const SSH_MSG_USERAUTH_FAILURE: u8 = 51;
+    pub const SSH_MSG_USERAUTH_SUCCESS: u8 = 52;
+    pub const SSH_MSG_GLOBAL_REQUEST: u8 = 80;
     pub const SSH_MSG_REQUEST_SUCCESS: u8 = 81;
-    pub const SSH_MSG_REQUEST_FAILURE: u8 = 82;   
-    pub const SSH_MSG_CHANNEL_OPEN: u8 = 90;   
-    pub const SSH_MSG_CHANNEL_OPEN_CONFIRMATION: u8 = 91;  
-    pub const SSH_MSG_CHANNEL_OPEN_FAILURE: u8 = 92; 
-    pub const SSH_MSG_CHANNEL_WINDOW_ADJUST: u8 = 93;  
-    pub const SSH_MSG_CHANNEL_DATA: u8 = 94;   
-    pub const SSH_MSG_CHANNEL_EXTENDED_DATA: u8 = 95; 
+    pub const SSH_MSG_REQUEST_FAILURE: u8 = 82;
+    pub const SSH_MSG_CHANNEL_OPEN: u8 = 90;
+    pub const SSH_MSG_CHANNEL_OPEN_CONFIRMATION: u8 = 91;
+    pub const SSH_MSG_CHANNEL_OPEN_FAILURE: u8 = 92;
+    pub const SSH_MSG_CHANNEL_WINDOW_ADJUST: u8 = 93;
+    pub const SSH_MSG_CHANNEL_DATA: u8 = 94;
+    pub const SSH_MSG_CHANNEL_EXTENDED_DATA: u8 = 95;
     pub const SSH_MSG_CHANNEL_EOF: u8 = 96;
     pub const SSH_MSG_CHANNEL_CLOSE: u8 = 97;
     pub const SSH_MSG_CHANNEL_REQUEST: u8 = 98;
@@ -72,4 +73,3 @@ impl DisconnectionMessage {
     pub const SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE: u8 = 14;
     pub const SSH_DISCONNECT_ILLEGAL_USER_NAME: u8 = 15;
 }
-

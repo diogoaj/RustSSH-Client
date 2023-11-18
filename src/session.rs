@@ -1,14 +1,17 @@
-use std::{cell::Cell, net::{SocketAddr, TcpStream, IpAddr}};
-use std::io::{BufReader, BufWriter, Result, prelude::*};
-use ring::digest;
 use rand::rngs::OsRng;
+use ring::digest;
+use std::io::{prelude::*, BufReader, BufWriter, Result};
+use std::{
+    cell::Cell,
+    net::{IpAddr, SocketAddr, TcpStream},
+};
 
 use crate::{constants, crypto};
 
 pub struct Session {
     reader: Cell<BufReader<TcpStream>>,
     writer: Cell<BufWriter<TcpStream>>,
-    pub csprng: OsRng, 
+    pub csprng: OsRng,
     pub client_sequence_number: u32,
     pub server_sequence_number: u32,
     pub session_id: Vec<u8>,
@@ -18,7 +21,7 @@ pub struct Session {
     pub client_window_size: u32,
     pub server_window_size: u32,
     pub encrypted: bool,
-    pub session_keys: Option<crypto::SessionKeys>
+    pub session_keys: Option<crypto::SessionKeys>,
 }
 
 impl Session {
@@ -32,7 +35,7 @@ impl Session {
         Ok(Session {
             reader: Cell::new(BufReader::new(stream.try_clone()?)),
             writer: Cell::new(BufWriter::new(stream)),
-            csprng: OsRng{},
+            csprng: OsRng {},
             client_sequence_number: 0,
             server_sequence_number: 0,
             session_id: Vec::new(),
@@ -43,7 +46,6 @@ impl Session {
             server_window_size: 0,
             encrypted: false,
             session_keys: None,
-
         })
     }
 
@@ -66,7 +68,7 @@ impl Session {
     }
 
     pub fn read_from_server(&mut self) -> Vec<Vec<u8>> {
-        let mut buf = [0u8;constants::Size::MAX_PACKET_SIZE as usize];
+        let mut buf = [0u8; constants::Size::MAX_PACKET_SIZE as usize];
         let result = self.reader.get_mut().read(&mut buf);
 
         if result.is_ok() && self.encrypted == false {
@@ -76,7 +78,6 @@ impl Session {
             let mut packet = Vec::new();
             packet.push(received_data);
             return packet;
-
         } else if result.is_ok() && self.encrypted == true {
             self.server_sequence_number += 1;
             let mut received_data = buf[..result.unwrap()].to_vec();
@@ -84,26 +85,33 @@ impl Session {
             let mut decrypted_packets: Vec<Vec<u8>> = Vec::new();
 
             while received_data.len() != 0 {
-                let mut enc_length_slice = [0u8;4];
+                let mut enc_length_slice = [0u8; 4];
                 enc_length_slice.copy_from_slice(&received_data[0..4]);
-    
+
                 let dec_length_slice = self.decrypt_packet_length(enc_length_slice);
                 let dec_length = u32::from_be_bytes(dec_length_slice);
 
                 if received_data.len() >= (dec_length + 20) as usize {
-                    decrypted_packets.push(self.decrypt_packet(&mut received_data[..(dec_length+20) as usize].to_vec()));
-                    received_data.drain(..(dec_length+20) as usize);
-                    self.data_received += dec_length+20;
+                    decrypted_packets.push(
+                        self.decrypt_packet(
+                            &mut received_data[..(dec_length + 20) as usize].to_vec(),
+                        ),
+                    );
+                    received_data.drain(..(dec_length + 20) as usize);
+                    self.data_received += dec_length + 20;
                     self.server_sequence_number += 1;
                 }
-                
-                if received_data.len() == 0 {self.server_sequence_number -= 1; return decrypted_packets; }
 
-                let mut buf = [0u8;constants::Size::MAX_PACKET_SIZE as usize];
+                if received_data.len() == 0 {
+                    self.server_sequence_number -= 1;
+                    return decrypted_packets;
+                }
+
+                let mut buf = [0u8; constants::Size::MAX_PACKET_SIZE as usize];
                 match self.reader.get_mut().read(&mut buf) {
                     Ok(size) => {
                         received_data.append(&mut buf[..size].to_vec());
-                    } 
+                    }
                     Err(_) => continue,
                 }
             }
@@ -118,43 +126,55 @@ impl Session {
         self.client_sequence_number += 1;
         self.writer.get_mut().flush()
     }
-    
-    pub fn decrypt_packet_length(&mut self, enc_length: [u8;4]) -> [u8;4] {
-        self.session_keys.as_mut().unwrap().decrypt_length(self.server_sequence_number, enc_length)
+
+    pub fn decrypt_packet_length(&mut self, enc_length: [u8; 4]) -> [u8; 4] {
+        self.session_keys
+            .as_mut()
+            .unwrap()
+            .decrypt_length(self.server_sequence_number, enc_length)
     }
 
     pub fn encrypt_packet(&mut self, packet: &mut Vec<u8>) {
-        self.session_keys.as_mut().unwrap().seal_packet(self.client_sequence_number, packet);
+        self.session_keys
+            .as_mut()
+            .unwrap()
+            .seal_packet(self.client_sequence_number, packet);
     }
 
     pub fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
-        let vec = self.session_keys.as_mut().unwrap().unseal_packet(self.server_sequence_number, packet);
+        let vec = self
+            .session_keys
+            .as_mut()
+            .unwrap()
+            .unseal_packet(self.server_sequence_number, packet);
         vec
     }
 
     pub fn pad_data(&self, data: &mut Vec<u8>) {
         let mut padding = match self.encrypted {
             true => 8 - (data.len() as u32 + 1) % 8,
-            false => 16 - (data.len() as u32 + 5) % 16
+            false => 16 - (data.len() as u32 + 5) % 16,
         };
 
-        if padding < 4 { padding += 8 };
+        if padding < 4 {
+            padding += 8
+        };
 
         data.append(&mut vec![0; padding as usize]);
-    
+
         let data_len = ((data.len() + 1 as usize) as u32).to_be_bytes().to_vec();
-    
+
         let mut i = 0;
         for b in data_len.iter() {
             data.insert(i, *b);
             i += 1;
         }
-    
+
         data.insert(i, padding as u8);
     }
 
     pub fn make_session_id(
-        &mut self, 
+        &mut self,
         algorithm: &'static digest::Algorithm,
         server_protocol_string: String,
         ciphers: &mut Vec<u8>,
@@ -162,14 +182,22 @@ impl Session {
         k_s: &mut Vec<u8>,
         e: &mut Vec<u8>,
         f: &mut Vec<u8>,
-        k: &mut Vec<u8>) {
-
+        k: &mut Vec<u8>,
+    ) {
         let mut v_c: Vec<u8> = Vec::new();
-        v_c.append(&mut (constants::Strings::CLIENT_VERSION.len() as u32).to_be_bytes().to_vec());
+        v_c.append(
+            &mut (constants::Strings::CLIENT_VERSION.len() as u32)
+                .to_be_bytes()
+                .to_vec(),
+        );
         v_c.append(&mut constants::Strings::CLIENT_VERSION.as_bytes().to_vec());
-        
+
         let mut v_s: Vec<u8> = Vec::new();
-        v_s.append(&mut (server_protocol_string.trim().len() as u32).to_be_bytes().to_vec());
+        v_s.append(
+            &mut (server_protocol_string.trim().len() as u32)
+                .to_be_bytes()
+                .to_vec(),
+        );
         v_s.append(&mut server_protocol_string.trim().as_bytes().to_vec());
 
         let mut ciphers_no_size = ciphers[5..(ciphers.len() - ciphers[4] as usize)].to_vec();
@@ -177,21 +205,18 @@ impl Session {
         i_c.append(&mut (ciphers_no_size.len() as u32).to_be_bytes().to_vec());
         i_c.append(&mut ciphers_no_size);
 
-        let mut received_ciphers_no_size = received_ciphers[5..(received_ciphers.len() - received_ciphers[4] as usize)].to_vec();
+        let mut received_ciphers_no_size =
+            received_ciphers[5..(received_ciphers.len() - received_ciphers[4] as usize)].to_vec();
         let mut i_s: Vec<u8> = Vec::new();
-        i_s.append(&mut (received_ciphers_no_size.len() as u32).to_be_bytes().to_vec());
+        i_s.append(
+            &mut (received_ciphers_no_size.len() as u32)
+                .to_be_bytes()
+                .to_vec(),
+        );
         i_s.append(&mut received_ciphers_no_size);
-        
+
         self.session_id = crypto::make_hash(
-            algorithm,
-            &mut v_c, 
-            &mut v_s, 
-            &mut i_c, 
-            &mut i_s, 
-            k_s, 
-            e, 
-            f,
-            k,
+            algorithm, &mut v_c, &mut v_s, &mut i_c, &mut i_s, k_s, e, f, k,
         );
     }
 

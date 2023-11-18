@@ -3,12 +3,12 @@ use std::net::IpAddr;
 
 mod algorithms;
 mod constants;
-mod ssh;
 mod crypto;
-mod session;
-mod kex;
-mod terminal;
 mod ed25519;
+mod kex;
+mod session;
+mod ssh;
+mod terminal;
 
 #[derive(Clap)]
 struct Opts {
@@ -17,7 +17,7 @@ struct Opts {
     port: u16,
 }
 
-fn main() -> std::io::Result<()>{
+fn main() -> std::io::Result<()> {
     let opts: Opts = Opts::parse();
     let mut ssh_client = ssh::SSH::new(opts.username, opts.ip, opts.port);
 

@@ -1,7 +1,7 @@
 use std::fs::{self, File};
-use std::io::{Read, Write, stdin, stdout, BufRead};
-use std::path::PathBuf;
+use std::io::{stdin, stdout, BufRead, Read, Write};
 use std::net::IpAddr;
+use std::path::PathBuf;
 
 use ed25519_dalek::*;
 use ring::digest;
@@ -9,7 +9,7 @@ use ring::digest;
 fn read_hosts(ip: IpAddr, fingerprint: String) -> std::io::Result<bool> {
     let stdin = stdin();
     let mut stdout = stdout();
-    let filename =  &PathBuf::from("rust_known_hosts");
+    let filename = &PathBuf::from("rust_known_hosts");
     let mut f = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -37,12 +37,12 @@ fn read_hosts(ip: IpAddr, fingerprint: String) -> std::io::Result<bool> {
         let mut user_input = String::new();
         stdin.lock().read_line(&mut user_input).unwrap();
         match &user_input[..] {
-            "yes\n" => { 
+            "yes\n" => {
                 write_fingerprint(f, ip, fingerprint)?;
                 println!("Host added.");
                 return Ok(true);
             }
-            "no\n" => { 
+            "no\n" => {
                 println!("Host could not be verified.");
                 return Ok(false);
             }
@@ -51,7 +51,7 @@ fn read_hosts(ip: IpAddr, fingerprint: String) -> std::io::Result<bool> {
                 stdout.flush()?;
             }
         }
-    } 
+    }
 }
 
 fn write_fingerprint(f: File, ip: IpAddr, fingerprint: String) -> std::io::Result<()> {
@@ -60,20 +60,27 @@ fn write_fingerprint(f: File, ip: IpAddr, fingerprint: String) -> std::io::Resul
 
 pub fn host_key_fingerprint_check(ip: IpAddr, server_host_key: &Vec<u8>) -> bool {
     // Get SHA256 fingerprint
-    let hash = digest::digest(&digest::SHA256, server_host_key.as_slice()).as_ref().to_vec();
+    let hash = digest::digest(&digest::SHA256, server_host_key.as_slice())
+        .as_ref()
+        .to_vec();
     let b64 = base64::encode(hash);
 
     read_hosts(ip, b64).unwrap()
 }
 
-pub fn verify_server_signature(signature: &Vec<u8>, server_host_key: &Vec<u8>, hash_data: &Vec<u8>) -> bool {
-    let mut signature_fixed_slice: [u8;64] = [0;64];
+pub fn verify_server_signature(
+    signature: &Vec<u8>,
+    server_host_key: &Vec<u8>,
+    hash_data: &Vec<u8>,
+) -> bool {
+    let mut signature_fixed_slice: [u8; 64] = [0; 64];
     signature_fixed_slice.copy_from_slice(signature.as_slice());
 
     let ed25519_signature = ed25519_dalek::Signature::new(signature_fixed_slice);
-    let host_key_ed25519 = ed25519_dalek::PublicKey::from_bytes(server_host_key.as_slice()).unwrap();
+    let host_key_ed25519 =
+        ed25519_dalek::PublicKey::from_bytes(server_host_key.as_slice()).unwrap();
 
-    host_key_ed25519.verify(
-        hash_data.as_slice(),  
-        &ed25519_signature).is_ok()
+    host_key_ed25519
+        .verify(hash_data.as_slice(), &ed25519_signature)
+        .is_ok()
 }
