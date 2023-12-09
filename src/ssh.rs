@@ -2,7 +2,7 @@ use core::convert::TryInto;
 use rand::Rng;
 use std::{
     io::stdin, io::stdout, io::Write, net::IpAddr, process::exit, str, sync::mpsc,
-    sync::mpsc::Receiver, sync::Mutex, thread,
+    sync::mpsc::Receiver, thread,
 };
 
 use ring::digest;
@@ -91,8 +91,7 @@ impl SSH {
 
         ciphers.append(&mut vec![0; 13]); // Last bytes - 0000 0000 0000 0
 
-        self.client_session.pad_data(&mut ciphers);
-        self.client_session.write_to_server(&ciphers).unwrap();
+        self.client_session.write_to_server(&mut ciphers).unwrap();
 
         self.ciphers = ciphers;
         self.received_ciphers = received_ciphers;
@@ -113,8 +112,7 @@ impl SSH {
         key_exchange.append(&mut (client_public_key.len() as u32).to_be_bytes().to_vec());
         key_exchange.append(&mut client_public_key);
 
-        self.client_session.pad_data(&mut key_exchange);
-        self.client_session.write_to_server(&key_exchange).unwrap();
+        self.client_session.write_to_server(&mut key_exchange).unwrap();
     }
 
     fn key_exchange(&mut self, received_ecdh: Vec<u8>) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
@@ -202,8 +200,7 @@ impl SSH {
         let mut new_keys: Vec<u8> = Vec::new();
         new_keys.push(constants::Message::SSH_MSG_NEWKEYS);
 
-        self.client_session.pad_data(&mut new_keys);
-        self.client_session.write_to_server(&new_keys).unwrap();
+        self.client_session.write_to_server(&mut new_keys).unwrap();
         self.client_session.encrypted = true;
     }
 
@@ -217,8 +214,6 @@ impl SSH {
         );
         service_request.append(&mut constants::Strings::SSH_USERAUTH.as_bytes().to_vec());
 
-        self.client_session.pad_data(&mut service_request);
-        self.client_session.encrypt_packet(&mut service_request);
         self.client_session
             .write_to_server(&mut service_request)
             .unwrap();
@@ -245,8 +240,6 @@ impl SSH {
         password_auth.append(&mut (password.len() as u32).to_be_bytes().to_vec());
         password_auth.append(&mut password.as_bytes().to_vec());
 
-        self.client_session.pad_data(&mut password_auth);
-        self.client_session.encrypt_packet(&mut password_auth);
         self.client_session
             .write_to_server(&mut password_auth)
             .unwrap();
@@ -269,8 +262,6 @@ impl SSH {
         );
         open_request.append(&mut constants::Size::MAX_PACKET_SIZE.to_be_bytes().to_vec());
 
-        self.client_session.pad_data(&mut open_request);
-        self.client_session.encrypt_packet(&mut open_request);
         self.client_session
             .write_to_server(&mut open_request)
             .unwrap();
@@ -306,8 +297,6 @@ impl SSH {
         channel_request.append(&mut (38400 as u32).to_be_bytes().to_vec());
         channel_request.push(0);
 
-        self.client_session.pad_data(&mut channel_request);
-        self.client_session.encrypt_packet(&mut channel_request);
         self.client_session
             .write_to_server(&mut channel_request)
             .unwrap();
@@ -325,8 +314,6 @@ impl SSH {
         channel_request.append(&mut constants::Strings::SHELL.as_bytes().to_vec());
         channel_request.push(1);
 
-        self.client_session.pad_data(&mut channel_request);
-        self.client_session.encrypt_packet(&mut channel_request);
         self.client_session
             .write_to_server(&mut channel_request)
             .unwrap();
@@ -344,8 +331,6 @@ impl SSH {
                 .to_vec(),
         );
 
-        self.client_session.pad_data(&mut window_adjust);
-        self.client_session.encrypt_packet(&mut window_adjust);
         self.client_session
             .write_to_server(&mut window_adjust)
             .unwrap();
@@ -358,8 +343,6 @@ impl SSH {
         command.append(&mut (key.len() as u32).to_be_bytes().to_vec());
         command.append(&mut key);
 
-        self.client_session.pad_data(&mut command);
-        self.client_session.encrypt_packet(&mut command);
         self.client_session.write_to_server(&mut command).unwrap();
     }
 
@@ -375,9 +358,7 @@ impl SSH {
         let mut close: Vec<u8> = Vec::new();
         close.push(constants::Message::SSH_MSG_CHANNEL_CLOSE);
         close.append(&mut (0 as u32).to_be_bytes().to_vec());
-
-        self.client_session.pad_data(&mut close);
-        self.client_session.encrypt_packet(&mut close);
+        
         self.client_session.write_to_server(&mut close).unwrap();
     }
 
@@ -405,10 +386,6 @@ impl SSH {
             self.get_key(&rx);
 
             for packet in queue {
-                // To give a chance to process special input
-                // while processing packets
-                self.get_key(&rx);
-
                 let (_, data_no_size) = packet.split_at(4);
                 let (_padding, data_no_size) = data_no_size.split_at(1);
                 let (code, data_no_size) = data_no_size.split_at(1);
@@ -540,7 +517,7 @@ impl SSH {
                         if terminal_launched == true {
                             let clone = tx.clone();
                             thread::spawn(move || {
-                                let mut terminal = terminal::Terminal::new(Mutex::new(clone));
+                                let mut terminal = terminal::Terminal::new(clone);
                                 terminal.handle_command();
                             });
                             terminal_launched = false;

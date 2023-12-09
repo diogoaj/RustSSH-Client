@@ -121,56 +121,14 @@ impl Session {
         Vec::new()
     }
 
-    pub fn write_to_server(&mut self, data: &Vec<u8>) -> Result<()> {
+    pub fn write_to_server(&mut self, data: &mut Vec<u8>) -> Result<()> {
+        self.pad_data(data);
+        if self.encrypted {
+            self.encrypt_packet(data);
+        }
         self.writer.get_mut().write(data.as_slice())?;
         self.client_sequence_number += 1;
         self.writer.get_mut().flush()
-    }
-
-    pub fn decrypt_packet_length(&mut self, enc_length: [u8; 4]) -> [u8; 4] {
-        self.session_keys
-            .as_mut()
-            .unwrap()
-            .decrypt_length(self.server_sequence_number, enc_length)
-    }
-
-    pub fn encrypt_packet(&mut self, packet: &mut Vec<u8>) {
-        self.session_keys
-            .as_mut()
-            .unwrap()
-            .seal_packet(self.client_sequence_number, packet);
-    }
-
-    pub fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
-        let vec = self
-            .session_keys
-            .as_mut()
-            .unwrap()
-            .unseal_packet(self.server_sequence_number, packet);
-        vec
-    }
-
-    pub fn pad_data(&self, data: &mut Vec<u8>) {
-        let mut padding = match self.encrypted {
-            true => 8 - (data.len() as u32 + 1) % 8,
-            false => 16 - (data.len() as u32 + 5) % 16,
-        };
-
-        if padding < 4 {
-            padding += 8
-        };
-
-        data.append(&mut vec![0; padding as usize]);
-
-        let data_len = ((data.len() + 1 as usize) as u32).to_be_bytes().to_vec();
-
-        let mut i = 0;
-        for b in data_len.iter() {
-            data.insert(i, *b);
-            i += 1;
-        }
-
-        data.insert(i, padding as u8);
     }
 
     pub fn make_session_id(
@@ -231,5 +189,51 @@ impl Session {
 
         int_vec.append(&mut int.to_vec());
         int_vec
+    }
+
+    fn pad_data(&self, data: &mut Vec<u8>) {
+        let mut padding = match self.encrypted {
+            true => 8 - (data.len() as u32 + 1) % 8,
+            false => 16 - (data.len() as u32 + 5) % 16,
+        };
+
+        if padding < 4 {
+            padding += 8
+        };
+
+        data.append(&mut vec![0; padding as usize]);
+
+        let data_len = ((data.len() + 1 as usize) as u32).to_be_bytes().to_vec();
+
+        let mut i = 0;
+        for b in data_len.iter() {
+            data.insert(i, *b);
+            i += 1;
+        }
+
+        data.insert(i, padding as u8);
+    }
+
+    fn encrypt_packet(&mut self, packet: &mut Vec<u8>) {
+        self.session_keys
+            .as_mut()
+            .unwrap()
+            .seal_packet(self.client_sequence_number, packet);
+    }
+
+    fn decrypt_packet_length(&mut self, enc_length: [u8; 4]) -> [u8; 4] {
+        self.session_keys
+            .as_mut()
+            .unwrap()
+            .decrypt_length(self.server_sequence_number, enc_length)
+    }
+
+    fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
+        let vec = self
+            .session_keys
+            .as_mut()
+            .unwrap()
+            .unseal_packet(self.server_sequence_number, packet);
+        vec
     }
 }
