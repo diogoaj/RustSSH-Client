@@ -18,13 +18,13 @@ impl SessionKeys {
         }
     }
 
-    pub fn seal_packet(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8> {
+    pub fn seal_packet<'a>(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8> {
         let mut tag: [u8; 16] = [0; 16];
         self.client_key
             .seal_in_place(sequence_number, packet, &mut tag);
 
         packet.append(&mut tag.to_vec());
-        packet.clone()
+        packet.to_vec()
     }
 
     pub fn decrypt_length(&mut self, sequence_number: u32, enc_length: [u8; 4]) -> [u8; 4] {
@@ -32,32 +32,28 @@ impl SessionKeys {
             .decrypt_packet_length(sequence_number, enc_length)
     }
 
-    pub fn unseal_packet(&mut self, sequence_number: u32, packet: &mut Vec<u8>) -> Vec<u8> {
-        let enc_response = packet.as_mut_slice();
-
-        let (enc_response_len_slice, enc_response) = enc_response.split_at_mut(4);
-
-        let mut enc_response_len: [u8; 4] = [0; 4];
-        enc_response_len.copy_from_slice(enc_response_len_slice);
-
-        let dec_response_len_slice = self.decrypt_length(sequence_number, enc_response_len);
-        let dec_response_len = u32::from_be_bytes(dec_response_len_slice);
-
-        let (enc_payload, enc_response) = enc_response.split_at_mut(dec_response_len as usize);
-        let (tag_slice, _) = enc_response.split_at_mut(16);
+    pub fn unseal_packet(
+        &mut self,
+        sequence_number: u32,
+        encrypted_length_slice: &[u8; 4],
+        decrypted_length_slice: &[u8; 4],
+        packet: &mut Vec<u8>,
+    ) -> Vec<u8> {
+        let decrypted_length = u32::from_be_bytes(*decrypted_length_slice) as usize;
+        let (encrypted_payload, tag_slice) = packet.split_at_mut(decrypted_length);
 
         let mut tag: [u8; 16] = [0; 16];
         tag.copy_from_slice(tag_slice);
 
-        let mut ciphertext_in = [enc_response_len_slice, enc_payload].concat();
-        let ciphertext_in = ciphertext_in.as_mut_slice();
+        let mut ciphertext = [encrypted_length_slice.to_vec(), encrypted_payload.to_vec()].concat();
+        let ciphertext = ciphertext.as_mut_slice();
 
-        let dec_response = self
+        let decrypted = self
             .server_key
-            .open_in_place(sequence_number, ciphertext_in, &mut tag)
+            .open_in_place(sequence_number, ciphertext, &mut tag)
             .unwrap();
 
-        [dec_response_len_slice.as_ref(), dec_response].concat()
+        [decrypted_length_slice.to_vec(), decrypted.to_vec()].concat()
     }
 }
 

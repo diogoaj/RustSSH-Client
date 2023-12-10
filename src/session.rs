@@ -86,20 +86,21 @@ impl Session {
             while received_data.len() != 0 {
                 self.server_sequence_number += 1;
 
-                let mut enc_length_slice = [0u8; 4];
-                enc_length_slice.copy_from_slice(&received_data[0..4]);
+                let mut encrypted_length_slice = [0u8; 4];
+                encrypted_length_slice.copy_from_slice(&received_data[0..4]);
 
-                let dec_length_slice = self.decrypt_packet_length(enc_length_slice);
-                let dec_length = u32::from_be_bytes(dec_length_slice);
+                let decrypted_length_slice = self.decrypt_packet_length(encrypted_length_slice);
+                let decrypted_length = u32::from_be_bytes(decrypted_length_slice);
+                let length_and_tag: u32 = 0x04 + 0x10;
 
-                if received_data.len() >= (dec_length + 20) as usize {
-                    packets.push(
-                        self.decrypt_packet(
-                            &mut received_data[..(dec_length + 20) as usize].to_vec(),
-                        ),
-                    );
-                    received_data.drain(..(dec_length + 20) as usize);
-                    self.data_received += dec_length + 20;
+                if received_data.len() >= (decrypted_length + length_and_tag) as usize {
+                    packets.push(self.decrypt_packet(
+                        &encrypted_length_slice,
+                        &decrypted_length_slice,
+                        &mut received_data[4..(decrypted_length + length_and_tag) as usize].to_vec(),
+                    ));
+                    received_data.drain(..(decrypted_length + length_and_tag) as usize);
+                    self.data_received += decrypted_length + length_and_tag;
                 }
             }
         }
@@ -213,12 +214,18 @@ impl Session {
             .decrypt_length(self.server_sequence_number, enc_length)
     }
 
-    fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
-        let vec = self
-            .session_keys
-            .as_mut()
-            .unwrap()
-            .unseal_packet(self.server_sequence_number, packet);
+    fn decrypt_packet(
+        &mut self,
+        encrypted_length: &[u8; 4],
+        decrypted_length: &[u8; 4],
+        packet: &mut Vec<u8>,
+    ) -> Vec<u8> {
+        let vec = self.session_keys.as_mut().unwrap().unseal_packet(
+            self.server_sequence_number,
+            encrypted_length,
+            decrypted_length,
+            packet,
+        );
         vec
     }
 }
