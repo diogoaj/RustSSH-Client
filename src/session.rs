@@ -1,16 +1,13 @@
 use rand::rngs::OsRng;
 use ring::digest;
 use std::io::{prelude::*, BufReader, BufWriter, Result};
-use std::{
-    cell::Cell,
-    net::{IpAddr, SocketAddr, TcpStream},
-};
+use std::net::{IpAddr, SocketAddr, TcpStream};
 
 use crate::{constants, crypto};
 
 pub struct Session {
-    reader: Cell<BufReader<TcpStream>>,
-    writer: Cell<BufWriter<TcpStream>>,
+    reader: BufReader<TcpStream>,
+    writer: BufWriter<TcpStream>,
     pub csprng: OsRng,
     pub client_sequence_number: u32,
     pub server_sequence_number: u32,
@@ -33,8 +30,8 @@ impl Session {
         };
         stream.set_nonblocking(true).unwrap();
         Ok(Session {
-            reader: Cell::new(BufReader::new(stream.try_clone()?)),
-            writer: Cell::new(BufWriter::new(stream)),
+            reader: BufReader::new(stream.try_clone()?),
+            writer: BufWriter::new(stream),
             csprng: OsRng {},
             client_sequence_number: 0,
             server_sequence_number: 0,
@@ -53,7 +50,7 @@ impl Session {
         let mut data = String::new();
 
         loop {
-            match self.reader.get_mut().read_line(&mut data) {
+            match self.reader.read_line(&mut data) {
                 Ok(_) => break,
                 Err(_) => continue,
             }
@@ -67,24 +64,28 @@ impl Session {
         Ok(())
     }
 
-    pub fn read_from_server(&mut self) -> Vec<Vec<u8>> {
-        let mut buf = [0u8; constants::Size::MAX_PACKET_SIZE as usize];
-        let result = self.reader.get_mut().read(&mut buf);
+    pub fn read_from_server(&mut self) -> Result<Vec<u8>> {
+        let mut received_data = Vec::new();
+        let read_bytes = {
+            let bytes = self.reader.fill_buf()?;
+            received_data.extend_from_slice(bytes);
+            bytes.len()
+        };
 
-        if result.is_ok() && self.encrypted == false {
+        self.reader.consume(read_bytes);
+
+        return Ok(received_data);
+    }
+
+    pub fn process_data(&mut self, mut received_data: Vec<u8>) -> Vec<Vec<u8>> {
+        let mut packets: Vec<Vec<u8>> = Vec::new();
+        if !received_data.is_empty() && self.encrypted == false {
             self.server_sequence_number += 1;
-            let received_data = buf[..result.unwrap()].to_vec();
-
-            let mut packet = Vec::new();
-            packet.push(received_data);
-            return packet;
-        } else if result.is_ok() && self.encrypted == true {
-            self.server_sequence_number += 1;
-            let mut received_data = buf[..result.unwrap()].to_vec();
-
-            let mut decrypted_packets: Vec<Vec<u8>> = Vec::new();
-
+            packets.push(received_data);
+        } else if !received_data.is_empty() && self.encrypted == true {
             while received_data.len() != 0 {
+                self.server_sequence_number += 1;
+
                 let mut enc_length_slice = [0u8; 4];
                 enc_length_slice.copy_from_slice(&received_data[0..4]);
 
@@ -92,33 +93,17 @@ impl Session {
                 let dec_length = u32::from_be_bytes(dec_length_slice);
 
                 if received_data.len() >= (dec_length + 20) as usize {
-                    decrypted_packets.push(
+                    packets.push(
                         self.decrypt_packet(
                             &mut received_data[..(dec_length + 20) as usize].to_vec(),
                         ),
                     );
                     received_data.drain(..(dec_length + 20) as usize);
                     self.data_received += dec_length + 20;
-                    self.server_sequence_number += 1;
-                }
-
-                if received_data.len() == 0 {
-                    self.server_sequence_number -= 1;
-                    return decrypted_packets;
-                }
-
-                let mut buf = [0u8; constants::Size::MAX_PACKET_SIZE as usize];
-                match self.reader.get_mut().read(&mut buf) {
-                    Ok(size) => {
-                        received_data.append(&mut buf[..size].to_vec());
-                    }
-                    Err(_) => continue,
                 }
             }
-            self.server_sequence_number -= 1;
-            return decrypted_packets;
         }
-        Vec::new()
+        return packets;
     }
 
     pub fn write_to_server(&mut self, data: &mut Vec<u8>) -> Result<()> {
