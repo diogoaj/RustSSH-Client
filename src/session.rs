@@ -79,29 +79,13 @@ impl Session {
 
     pub fn process_data(&mut self, mut received_data: Vec<u8>) -> Vec<Vec<u8>> {
         let mut packets: Vec<Vec<u8>> = Vec::new();
-        if !received_data.is_empty() && self.encrypted == false {
+        if self.encrypted == false {
             self.server_sequence_number += 1;
             packets.push(received_data);
-        } else if !received_data.is_empty() && self.encrypted == true {
+        } else {
             while received_data.len() != 0 {
                 self.server_sequence_number += 1;
-
-                let mut encrypted_length_slice = [0u8; 4];
-                encrypted_length_slice.copy_from_slice(&received_data[0..4]);
-
-                let decrypted_length_slice = self.decrypt_packet_length(encrypted_length_slice);
-                let decrypted_length = u32::from_be_bytes(decrypted_length_slice);
-                let length_and_tag: u32 = 0x04 + 0x10;
-
-                if received_data.len() >= (decrypted_length + length_and_tag) as usize {
-                    packets.push(self.decrypt_packet(
-                        &encrypted_length_slice,
-                        &decrypted_length_slice,
-                        &mut received_data[4..(decrypted_length + length_and_tag) as usize].to_vec(),
-                    ));
-                    received_data.drain(..(decrypted_length + length_and_tag) as usize);
-                    self.data_received += decrypted_length + length_and_tag;
-                }
+                packets.push(self.decrypt_packet(&mut received_data));
             }
         }
         return packets;
@@ -190,13 +174,11 @@ impl Session {
         data.append(&mut vec![0; padding as usize]);
 
         let data_len = ((data.len() + 1 as usize) as u32).to_be_bytes().to_vec();
-
         let mut i = 0;
         for b in data_len.iter() {
             data.insert(i, *b);
             i += 1;
         }
-
         data.insert(i, padding as u8);
     }
 
@@ -214,18 +196,23 @@ impl Session {
             .decrypt_length(self.server_sequence_number, enc_length)
     }
 
-    fn decrypt_packet(
-        &mut self,
-        encrypted_length: &[u8; 4],
-        decrypted_length: &[u8; 4],
-        packet: &mut Vec<u8>,
-    ) -> Vec<u8> {
+    fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
+        let mut encrypted_length_slice = [0u8; 4];
+        encrypted_length_slice.copy_from_slice(&packet[0..4]);
+
+        let decrypted_length_slice = self.decrypt_packet_length(encrypted_length_slice);
+        let decrypted_length = u32::from_be_bytes(decrypted_length_slice);
+        let length_and_tag: u32 = 0x04 + 0x10;
+
         let vec = self.session_keys.as_mut().unwrap().unseal_packet(
             self.server_sequence_number,
-            encrypted_length,
-            decrypted_length,
-            packet,
+            &encrypted_length_slice,
+            &decrypted_length_slice,
+            &mut packet[4..].to_vec(),
         );
+
+        packet.drain(..(decrypted_length + length_and_tag) as usize);
+
         vec
     }
 }
