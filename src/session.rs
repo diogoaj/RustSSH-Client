@@ -202,7 +202,6 @@ impl Session {
         return packets;
     }
 
-
     pub fn make_session_id(
         &mut self,
         algorithm: &'static digest::Algorithm,
