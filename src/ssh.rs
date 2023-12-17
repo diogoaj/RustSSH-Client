@@ -203,7 +203,6 @@ impl SSH {
         new_keys.push(constants::Message::SSH_MSG_NEWKEYS);
 
         self.client_session.write_to_server(&mut new_keys).unwrap();
-        self.client_session.encrypted = true;
     }
 
     fn service_request_message(&mut self) {
@@ -442,10 +441,10 @@ impl SSH {
                             &mut session_id,
                         );
 
-                        let session_keys = crypto::SessionKeys::new(keys);
-                        self.client_session.session_keys = Some(session_keys);
-
                         self.new_keys_message();
+
+                        let session_keys = crypto::SessionKeys::new(keys);
+                        self.client_session.set_encrypted_state(session_keys);
 
                         // Request authentication
                         self.service_request_message();

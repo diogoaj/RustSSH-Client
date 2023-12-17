@@ -1,4 +1,5 @@
-use std::{io, io::stdin, io::stdout, sync::mpsc::Sender};
+use std::io::stdout;
+use std::{io, io::stdin, sync::mpsc::Sender};
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
