@@ -1,14 +1,15 @@
-use std::{io, io::stdin, io::stdout, sync::mpsc::Sender, sync::Mutex};
+use std::io::stdout;
+use std::{io, io::stdin, sync::mpsc::Sender};
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 
 pub struct Terminal {
-    tx: Mutex<Sender<Vec<u8>>>,
+    tx: Sender<Vec<u8>>,
 }
 
 impl Terminal {
-    pub fn new(tx: Mutex<Sender<Vec<u8>>>) -> Terminal {
+    pub fn new(tx: Sender<Vec<u8>>) -> Terminal {
         Terminal { tx }
     }
 
@@ -20,11 +21,7 @@ impl Terminal {
         for c in stdin.keys() {
             match c.unwrap() {
                 Key::Ctrl(c) => {
-                    self.tx
-                        .try_lock()
-                        .unwrap()
-                        .send(vec![(c as u8) - 96])
-                        .unwrap();
+                    self.tx.send(vec![(c as u8) - 96]).unwrap();
 
                     // Handle Ctrl + d
                     if c == 'd' {
@@ -33,7 +30,7 @@ impl Terminal {
                 }
                 Key::Char(c) => {
                     command.push(c);
-                    self.tx.try_lock().unwrap().send(vec![c as u8]).unwrap();
+                    self.tx.send(vec![c as u8]).unwrap();
                     if c == '\n' {
                         if command.contains("exit") || command.contains("logout") {
                             break;
@@ -41,32 +38,12 @@ impl Terminal {
                         command.clear();
                     }
                 }
-                Key::Backspace => self.tx.try_lock().unwrap().send(vec![0x7f]).unwrap(),
-                Key::Up => self
-                    .tx
-                    .try_lock()
-                    .unwrap()
-                    .send(vec![0x1b, 0x5b, 0x41])
-                    .unwrap(),
-                Key::Down => self
-                    .tx
-                    .try_lock()
-                    .unwrap()
-                    .send(vec![0x1b, 0x5b, 0x42])
-                    .unwrap(),
-                Key::Right => self
-                    .tx
-                    .try_lock()
-                    .unwrap()
-                    .send(vec![0x1b, 0x5b, 0x43])
-                    .unwrap(),
-                Key::Left => self
-                    .tx
-                    .try_lock()
-                    .unwrap()
-                    .send(vec![0x1b, 0x5b, 0x44])
-                    .unwrap(),
-                Key::Esc => self.tx.try_lock().unwrap().send(vec![0x1b]).unwrap(),
+                Key::Backspace => self.tx.send(vec![0x7f]).unwrap(),
+                Key::Up => self.tx.send(vec![0x1b, 0x5b, 0x41]).unwrap(),
+                Key::Down => self.tx.send(vec![0x1b, 0x5b, 0x42]).unwrap(),
+                Key::Right => self.tx.send(vec![0x1b, 0x5b, 0x43]).unwrap(),
+                Key::Left => self.tx.send(vec![0x1b, 0x5b, 0x44]).unwrap(),
+                Key::Esc => self.tx.send(vec![0x1b]).unwrap(),
                 _ => {}
             }
         }
