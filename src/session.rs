@@ -3,12 +3,13 @@ use ring::digest;
 use std::io::{prelude::*, BufReader, BufWriter, Result};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 
+use crate::packet::Packet;
 use crate::{constants, crypto};
 
 trait BaseState {
-    fn process_incoming_packet(&mut self, received_data: &mut Vec<u8>) -> Vec<u8>;
+    fn process_incoming_packet(&mut self, received_data: &mut Vec<u8>) -> Packet;
     fn process_outgoing_packet(&mut self, data: &mut Vec<u8>);
-    fn get_padding(&self, data: &Vec<u8>) -> u32;
+    fn get_padding(&self, data: &Vec<u8>) -> u8;
     fn get_client_sequence_number(&self) -> u32;
     fn get_server_sequence_number(&self) -> u32;
 }
@@ -20,12 +21,13 @@ struct EncryptedState {
 }
 
 impl BaseState for EncryptedState {
-    fn process_incoming_packet(&mut self, received_data: &mut Vec<u8>) -> Vec<u8> {
+    fn process_incoming_packet(&mut self, mut received_data: &mut Vec<u8>) -> Packet {
         self.server_sequence_number += 1;
-        let packet = self.decrypt_packet(received_data);
-        let packet_size = packet.len() + 16;
+        let mut packet_data = self.decrypt_packet(&mut received_data);
+        let packet = Packet::new(&mut packet_data);
 
-        received_data.drain(..packet_size);
+        received_data.drain(..(packet.length + 20 as u32) as usize);
+
         packet
     }
 
@@ -34,8 +36,8 @@ impl BaseState for EncryptedState {
         self.client_sequence_number += 1;
     }
 
-    fn get_padding(&self, data: &Vec<u8>) -> u32 {
-        8 - (data.len() as u32 + 1) % 8
+    fn get_padding(&self, data: &Vec<u8>) -> u8 {
+        (8 - (data.len() + 1) % 8) as u8
     }
 
     fn get_client_sequence_number(&self) -> u32 {
@@ -60,7 +62,7 @@ impl EncryptedState {
 
     fn decrypt_packet(&mut self, packet: &mut Vec<u8>) -> Vec<u8> {
         let mut encrypted_length_slice = [0u8; 4];
-        encrypted_length_slice.copy_from_slice(&packet[0..4]);
+        encrypted_length_slice.copy_from_slice(&packet[..4]);
 
         let decrypted_length_slice = self.decrypt_packet_length(encrypted_length_slice);
 
@@ -81,12 +83,12 @@ struct PlaintextState {
 }
 
 impl BaseState for PlaintextState {
-    fn process_incoming_packet(&mut self, received_data: &mut Vec<u8>) -> Vec<u8> {
+    fn process_incoming_packet(&mut self, received_data: &mut Vec<u8>) -> Packet {
         self.server_sequence_number += 1;
-        let packet = received_data.clone();
-        let packet_size = received_data.len();
+        let packet = Packet::new(received_data);
 
-        received_data.drain(..packet_size);
+        received_data.drain(..(packet.length + 4 as u32) as usize);
+
         packet
     }
 
@@ -94,8 +96,8 @@ impl BaseState for PlaintextState {
         self.client_sequence_number += 1;
     }
 
-    fn get_padding(&self, data: &Vec<u8>) -> u32 {
-        16 - (data.len() as u32 + 4 + 1) % 16
+    fn get_padding(&self, data: &Vec<u8>) -> u8 {
+        (16 - (data.len() + 4 + 1) % 16) as u8
     }
 
     fn get_client_sequence_number(&self) -> u32 {
@@ -148,22 +150,9 @@ impl Session {
     pub fn set_encrypted_state(&mut self, session_keys: crypto::SessionKeys) {
         self.encrypted_state = Box::new(EncryptedState {
             client_sequence_number: self.encrypted_state.get_client_sequence_number(),
-            server_sequence_number: self.encrypted_state.get_server_sequence_number(),
+            server_sequence_number: self.encrypted_state.get_server_sequence_number() - 1,
             session_keys,
         })
-    }
-
-    pub fn write_line(&mut self, line: &str) -> Result<()> {
-        self.writer.get_mut().write(&line.as_bytes())?;
-        self.writer.get_mut().flush()?;
-        Ok(())
-    }
-
-    pub fn write_to_server(&mut self, data: &mut Vec<u8>) -> Result<()> {
-        self.pad_data(data, self.encrypted_state.get_padding(data));
-        self.encrypted_state.process_outgoing_packet(data);
-        self.writer.get_mut().write(data.as_slice())?;
-        self.writer.get_mut().flush()
     }
 
     pub fn read_line(&mut self) -> Result<String> {
@@ -191,14 +180,28 @@ impl Session {
         return Ok(received_data);
     }
 
-    pub fn process_data(&mut self, mut received_data: Vec<u8>) -> Vec<Vec<u8>> {
-        let mut packets: Vec<Vec<u8>> = Vec::new();
+    pub fn write_line(&mut self, line: &str) -> Result<()> {
+        self.writer.get_mut().write(&line.as_bytes())?;
+        self.writer.get_mut().flush()?;
+        Ok(())
+    }
+
+    pub fn write_to_server(&mut self, data: &mut Vec<u8>) -> Result<()> {
+        self.pad_data(data, self.encrypted_state.get_padding(data));
+        self.encrypted_state.process_outgoing_packet(data);
+        self.writer.get_mut().write(data.as_slice())?;
+        self.writer.get_mut().flush()
+    }
+
+    pub fn process_data(&mut self, mut received_data: Vec<u8>) -> Vec<Packet> {
+        let mut packets = Vec::new();
         while received_data.len() != 0 {
             let packet = self
                 .encrypted_state
                 .process_incoming_packet(&mut received_data);
             packets.push(packet);
         }
+
         return packets;
     }
 
@@ -249,20 +252,7 @@ impl Session {
         );
     }
 
-    pub fn mpint(&self, int: &[u8]) -> Vec<u8> {
-        let mut int_vec: Vec<u8> = Vec::new();
-        if int[0] & 128 == 128 {
-            int_vec.append(&mut 33u32.to_be_bytes().to_vec());
-            int_vec.push(0);
-        } else {
-            int_vec.append(&mut 32u32.to_be_bytes().to_vec());
-        };
-
-        int_vec.append(&mut int.to_vec());
-        int_vec
-    }
-
-    fn pad_data(&self, data: &mut Vec<u8>, mut padding: u32) {
+    fn pad_data(&self, data: &mut Vec<u8>, mut padding: u8) {
         if padding < 4 {
             padding += 8
         };
