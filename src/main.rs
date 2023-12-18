@@ -7,9 +7,11 @@ mod constants;
 mod crypto;
 mod ed25519;
 mod kex;
+mod packet;
 mod session;
 mod ssh;
 mod terminal;
+mod utils;
 
 #[derive(Parser)]
 struct Opts {

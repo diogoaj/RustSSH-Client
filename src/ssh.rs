@@ -9,7 +9,10 @@ use ring::digest;
 
 use termion::input::TermRead;
 
-use crate::{algorithms, constants, crypto, ed25519, kex, session::Session, terminal};
+use crate::{
+    algorithms, constants, crypto, ed25519, kex, packet::Packet, session::Session, terminal,
+    utils::mpint,
+};
 
 pub struct SSH {
     host: IpAddr,
@@ -58,17 +61,18 @@ impl SSH {
         self.client_session.read_line().unwrap()
     }
 
-    fn algorithm_exchange(&mut self, received_ciphers: Vec<u8>) {
+    fn algorithm_exchange(&mut self, mut packet: Packet) {
         let mut server_algorithms: Vec<&str> = Vec::new();
-        let mut i = 22;
+        let _cookie = &packet.payload[1..17];
 
+        // TODO: Implement algorithm picking logic
+        let mut i = 17;
         for _ in 0..8 {
             let mut size_bytes: [u8; 4] = [0; 4];
-            size_bytes.copy_from_slice(&received_ciphers[i..i + 4]);
+            size_bytes.copy_from_slice(&packet.payload[i..i + 4]);
             let algo_size = u32::from_be_bytes(size_bytes);
-            server_algorithms.push(
-                str::from_utf8(&received_ciphers[i + 4..i + 4 + algo_size as usize]).unwrap(),
-            );
+            server_algorithms
+                .push(str::from_utf8(&packet.payload[i + 4..i + 4 + algo_size as usize]).unwrap());
             i = i + 4 + algo_size as usize;
         }
 
@@ -88,7 +92,7 @@ impl SSH {
         self.client_session.write_to_server(&mut ciphers).unwrap();
 
         self.ciphers = ciphers;
-        self.received_ciphers = received_ciphers;
+        self.received_ciphers = packet.to_vec();
     }
 
     fn send_public_key(&mut self) {
@@ -111,11 +115,13 @@ impl SSH {
             .unwrap();
     }
 
-    fn key_exchange(&mut self, received_ecdh: Vec<u8>) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+    fn key_exchange(&mut self, packet: Packet) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
         let mut e = Vec::new();
         let pub_key = self.kex_keys.as_ref().unwrap().public_key.as_bytes();
         e.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
         e.append(&mut pub_key.to_vec());
+
+        let received_ecdh = &packet.payload[1..];
 
         let (key_size_slice, received_ecdh) = received_ecdh.split_at(4);
 
@@ -180,12 +186,7 @@ impl SSH {
 
         let f = [f_size_slice, f.as_ref()].concat();
 
-        (
-            k_s,
-            e.to_vec(),
-            f,
-            self.client_session.mpint(secret.as_bytes()),
-        )
+        (k_s, e.to_vec(), f, mpint(secret.as_bytes()))
     }
 
     fn new_keys_message(&mut self) {
@@ -378,20 +379,17 @@ impl SSH {
             self.get_key(&rx);
 
             for packet in queue {
-                let (_, data_no_size) = packet.split_at(4);
-                let (_padding, data_no_size) = data_no_size.split_at(1);
-                let (code, data_no_size) = data_no_size.split_at(1);
+                let code = packet.payload[0];
 
                 // Process each packet by matching the message code
-                match code[0] {
+                match code {
                     constants::Message::SSH_MSG_KEXINIT => {
                         // TODO - Check if client and server algorithms match
                         self.algorithm_exchange(packet);
                         self.send_public_key();
                     }
                     constants::Message::SSH_MSG_KEX_ECDH_REPLY => {
-                        let (mut k_s, mut e, mut f, mut k) =
-                            self.key_exchange(data_no_size.to_vec());
+                        let (mut k_s, mut e, mut f, mut k) = self.key_exchange(packet);
 
                         // Make Session ID
                         // TODO - Change this when implementing rekey
@@ -435,6 +433,7 @@ impl SSH {
                         // Request authentication
                         self.service_request_message();
                     }
+                    constants::Message::SSH_MSG_NEWKEYS => {}
                     constants::Message::SSH_MSG_SERVICE_ACCEPT => {
                         // Password authentication
                         // TODO - Implement other types of authentication (keys)
@@ -467,7 +466,7 @@ impl SSH {
                     }
                     constants::Message::SSH_MSG_CHANNEL_SUCCESS => {}
                     constants::Message::SSH_MSG_CHANNEL_WINDOW_ADJUST => {
-                        let (_recipient_channel, data_no_size) = data_no_size.split_at(4);
+                        let (_recipient_channel, data_no_size) = packet.payload[1..].split_at(4);
                         let (window_bytes, _) = data_no_size.split_at(4);
 
                         let mut window_slice = [0u8; 4];
@@ -476,7 +475,7 @@ impl SSH {
                         self.client_session.server_window_size = u32::from_be_bytes(window_slice);
                     }
                     constants::Message::SSH_MSG_CHANNEL_DATA => {
-                        let (_recipient_channel, data_no_size) = data_no_size.split_at(4);
+                        let (_recipient_channel, data_no_size) = packet.payload[1..].split_at(4);
                         let (data_size, data_no_size) = data_no_size.split_at(4);
                         let data_size = u32::from_be_bytes(data_size.try_into().unwrap());
 
@@ -510,7 +509,7 @@ impl SSH {
                         exit(1);
                     }
                     _ => {
-                        println!("Could not recognize this message -> {}", code[0]);
+                        println!("Could not recognize this message -> {}", code);
                         exit(1);
                     }
                 }
