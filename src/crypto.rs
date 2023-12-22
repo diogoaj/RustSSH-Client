@@ -53,7 +53,12 @@ impl SessionKeys {
             .open_in_place(sequence_number, ciphertext, &mut tag)
             .unwrap();
 
-        [decrypted_length_slice.to_vec(), decrypted.to_vec()].concat()
+        [
+            decrypted_length_slice.to_vec(),
+            decrypted.to_vec(),
+            tag.to_vec(),
+        ]
+        .concat()
     }
 }
 

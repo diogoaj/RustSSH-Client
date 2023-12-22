@@ -1,5 +1,5 @@
 use core::convert::TryInto;
-use rand::Rng;
+use rand::{rngs::OsRng, Rng};
 use std::{
     io::stdin, io::stdout, io::Write, net::IpAddr, process::exit, str, sync::mpsc,
     sync::mpsc::Receiver, thread,
@@ -10,7 +10,11 @@ use ring::digest;
 use termion::input::TermRead;
 
 use crate::{
-    algorithms, constants, crypto, ed25519, kex, packet::Packet, session::Session, terminal,
+    algorithms, constants, crypto, ed25519,
+    kex::{try_match, Kex},
+    packet::Packet,
+    session::Session,
+    terminal,
     utils::mpint,
 };
 
@@ -22,7 +26,7 @@ pub struct SSH {
     received_ciphers: Vec<u8>,
     server_host_key: Vec<u8>,
     server_signature: Vec<u8>,
-    kex_keys: Option<kex::Kex>,
+    kex: Option<Box<dyn Kex>>,
 }
 
 impl SSH {
@@ -35,7 +39,7 @@ impl SSH {
             received_ciphers: Vec::new(),
             server_host_key: Vec::new(),
             server_signature: Vec::new(),
-            kex_keys: None,
+            kex: None,
         }
     }
 
@@ -61,11 +65,10 @@ impl SSH {
         self.client_session.read_line().unwrap()
     }
 
-    fn algorithm_exchange(&mut self, mut packet: Packet) {
+    fn algorithm_exchange(&mut self, packet: Packet) {
         let mut server_algorithms: Vec<&str> = Vec::new();
-        let _cookie = &packet.payload[1..17];
 
-        // TODO: Implement algorithm picking logic
+        // Start after cookie bytes [0..16]
         let mut i = 17;
         for _ in 0..8 {
             let mut size_bytes: [u8; 4] = [0; 4];
@@ -77,7 +80,7 @@ impl SSH {
         }
 
         let mut ciphers: Vec<u8> = Vec::new();
-        let cookie: [u8; 16] = self.client_session.csprng.gen();
+        let cookie: [u8; 16] = OsRng.gen();
 
         ciphers.push(constants::Message::SSH_MSG_KEXINIT);
         ciphers.append(&mut cookie.to_vec());
@@ -96,19 +99,14 @@ impl SSH {
     }
 
     fn send_public_key(&mut self) {
-        self.kex_keys = Some(kex::Kex::new(&mut self.client_session));
-        let mut client_public_key = self
-            .kex_keys
-            .as_ref()
-            .unwrap()
-            .public_key
-            .as_bytes()
-            .to_vec();
+        self.kex = try_match("curve25519-sha256");
+
+        let client_public_key = self.kex.as_ref().unwrap().get_public_key();
 
         let mut key_exchange: Vec<u8> = Vec::new();
         key_exchange.push(constants::Message::SSH_MSG_KEX_ECDH_INIT);
         key_exchange.append(&mut (client_public_key.len() as u32).to_be_bytes().to_vec());
-        key_exchange.append(&mut client_public_key);
+        key_exchange.append(&mut client_public_key.to_vec());
 
         self.client_session
             .write_to_server(&mut key_exchange)
@@ -117,7 +115,7 @@ impl SSH {
 
     fn key_exchange(&mut self, packet: Packet) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
         let mut e = Vec::new();
-        let pub_key = self.kex_keys.as_ref().unwrap().public_key.as_bytes();
+        let pub_key = self.kex.as_ref().unwrap().get_public_key();
         e.append(&mut (pub_key.len() as u32).to_be_bytes().to_vec());
         e.append(&mut pub_key.to_vec());
 
@@ -182,11 +180,11 @@ impl SSH {
 
         self.server_signature = signature.to_vec();
 
-        let secret = self.kex_keys.as_ref().unwrap().generate_shared_secret(f);
+        let secret = self.kex.as_ref().unwrap().generate_shared_key(&f);
 
         let f = [f_size_slice, f.as_ref()].concat();
 
-        (k_s, e.to_vec(), f, mpint(secret.as_bytes()))
+        (k_s, e.to_vec(), f, mpint(secret.as_slice()))
     }
 
     fn new_keys_message(&mut self) {

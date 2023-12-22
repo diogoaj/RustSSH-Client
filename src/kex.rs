@@ -1,25 +1,48 @@
-use crate::session::Session;
+use rand::rngs::OsRng;
+use x25519_dalek::{PublicKey, StaticSecret};
 
-use std::convert::From;
-use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
-
-pub struct Kex {
-    pub private_key: StaticSecret,
-    pub public_key: PublicKey,
+pub trait Kex {
+    fn generate_shared_key(&self, f: &[u8]) -> Vec<u8>;
+    fn get_public_key(&self) -> Vec<u8>;
 }
 
-impl Kex {
-    pub fn new(client: &mut Session) -> Kex {
-        let private_key = StaticSecret::random_from_rng(&mut client.csprng);
+pub fn try_match(s: &str) -> Option<Box<dyn Kex>> {
+    match s {
+        "curve25519-sha256" => Some(Box::new(Curve25519::new())),
+        _ => None,
+    }
+}
+
+// curve25519-sha256
+pub struct Curve25519 {
+    private_key: StaticSecret,
+    public_key: PublicKey,
+}
+
+impl Curve25519 {
+    pub fn new() -> Self {
+        let private_key = StaticSecret::random_from_rng(OsRng {});
         let public_key = PublicKey::from(&private_key);
-        Kex {
+        Self {
             private_key,
             public_key,
         }
     }
+}
 
-    pub fn generate_shared_secret(&self, f: [u8; 32]) -> SharedSecret {
-        let server_pub = PublicKey::from(f);
-        self.private_key.diffie_hellman(&server_pub)
+impl Kex for Curve25519 {
+    fn generate_shared_key(&self, f: &[u8]) -> Vec<u8> {
+        let mut server_pub_slice = [0u8; 32];
+        server_pub_slice.copy_from_slice(f);
+
+        let server_pub = PublicKey::from(server_pub_slice);
+        self.private_key
+            .diffie_hellman(&server_pub)
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn get_public_key(&self) -> Vec<u8> {
+        self.public_key.as_bytes().to_vec()
     }
 }

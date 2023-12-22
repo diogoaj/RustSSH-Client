@@ -1,4 +1,3 @@
-use rand::rngs::OsRng;
 use ring::digest;
 use std::io::{prelude::*, BufReader, BufWriter, Result};
 use std::net::{IpAddr, SocketAddr, TcpStream};
@@ -12,6 +11,22 @@ trait BaseState {
     fn get_padding(&self, data: &Vec<u8>) -> u8;
     fn get_client_sequence_number(&self) -> u32;
     fn get_server_sequence_number(&self) -> u32;
+    fn pad_data(&self, data: &mut Vec<u8>) {
+        let mut padding = self.get_padding(data);
+        if padding < 4 {
+            padding += 8
+        };
+
+        data.append(&mut vec![0; padding as usize]);
+
+        let data_len = ((data.len() + 1 as usize) as u32).to_be_bytes().to_vec();
+        let mut i = 0;
+        for b in data_len.iter() {
+            data.insert(i, *b);
+            i += 1;
+        }
+        data.insert(i, padding as u8);
+    }
 }
 
 struct EncryptedState {
@@ -24,9 +39,9 @@ impl BaseState for EncryptedState {
     fn process_incoming_packet(&mut self, mut received_data: &mut Vec<u8>) -> Packet {
         self.server_sequence_number += 1;
         let mut packet_data = self.decrypt_packet(&mut received_data);
-        let packet = Packet::new(&mut packet_data);
+        let packet = Packet::new(&mut packet_data, true);
 
-        received_data.drain(..(packet.length + 20 as u32) as usize);
+        received_data.drain(..packet.to_vec().len());
 
         packet
     }
@@ -36,8 +51,13 @@ impl BaseState for EncryptedState {
         self.client_sequence_number += 1;
     }
 
+    // TODO: Refactor this when implementing other ciphers
     fn get_padding(&self, data: &Vec<u8>) -> u8 {
-        (8 - (data.len() + 1) % 8) as u8
+        let block_size = 8;
+        let aadlen = 4; // chacha20-poly1305@openssh.com is AEAD
+        let padding_len = 1;
+        let packet_len = 4;
+        (block_size - ((data.len() - aadlen + padding_len + packet_len) % block_size)) as u8
     }
 
     fn get_client_sequence_number(&self) -> u32 {
@@ -85,9 +105,9 @@ struct PlaintextState {
 impl BaseState for PlaintextState {
     fn process_incoming_packet(&mut self, received_data: &mut Vec<u8>) -> Packet {
         self.server_sequence_number += 1;
-        let packet = Packet::new(received_data);
+        let packet = Packet::new(received_data, false);
 
-        received_data.drain(..(packet.length + 4 as u32) as usize);
+        received_data.drain(..packet.to_vec().len() as usize);
 
         packet
     }
@@ -97,7 +117,11 @@ impl BaseState for PlaintextState {
     }
 
     fn get_padding(&self, data: &Vec<u8>) -> u8 {
-        (16 - (data.len() + 4 + 1) % 16) as u8
+        let block_size = 8;
+        let aadlen = 0;
+        let padding_len = 1;
+        let packet_len = 4;
+        (block_size - ((data.len() - aadlen + packet_len + padding_len) % block_size)) as u8
     }
 
     fn get_client_sequence_number(&self) -> u32 {
@@ -112,7 +136,6 @@ impl BaseState for PlaintextState {
 pub struct Session {
     reader: BufReader<TcpStream>,
     writer: BufWriter<TcpStream>,
-    pub csprng: OsRng,
     pub session_id: Vec<u8>,
     pub data_received: u32,
     pub data_sent: u32,
@@ -133,7 +156,6 @@ impl Session {
         Ok(Session {
             reader: BufReader::new(stream.try_clone()?),
             writer: BufWriter::new(stream),
-            csprng: OsRng {},
             session_id: Vec::new(),
             data_received: 0,
             data_sent: 0,
@@ -187,7 +209,7 @@ impl Session {
     }
 
     pub fn write_to_server(&mut self, data: &mut Vec<u8>) -> Result<()> {
-        self.pad_data(data, self.encrypted_state.get_padding(data));
+        self.encrypted_state.pad_data(data);
         self.encrypted_state.process_outgoing_packet(data);
         self.writer.get_mut().write(data.as_slice())?;
         self.writer.get_mut().flush()
@@ -199,6 +221,8 @@ impl Session {
             let packet = self
                 .encrypted_state
                 .process_incoming_packet(&mut received_data);
+
+            self.data_received += packet.length;
             packets.push(packet);
         }
 
@@ -250,21 +274,5 @@ impl Session {
         self.session_id = crypto::make_hash(
             algorithm, &mut v_c, &mut v_s, &mut i_c, &mut i_s, k_s, e, f, k,
         );
-    }
-
-    fn pad_data(&self, data: &mut Vec<u8>, mut padding: u8) {
-        if padding < 4 {
-            padding += 8
-        };
-
-        data.append(&mut vec![0; padding as usize]);
-
-        let data_len = ((data.len() + 1 as usize) as u32).to_be_bytes().to_vec();
-        let mut i = 0;
-        for b in data_len.iter() {
-            data.insert(i, *b);
-            i += 1;
-        }
-        data.insert(i, padding as u8);
     }
 }

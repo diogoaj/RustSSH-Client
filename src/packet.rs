@@ -11,7 +11,7 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub fn new(data: &mut Vec<u8>) -> Self {
+    pub fn new(data: &mut Vec<u8>, handle_mac: bool) -> Self {
         let packet_length: [u8; 4] = data[..4].try_into().unwrap();
         let length = u32::from_be_bytes(packet_length);
 
@@ -23,17 +23,21 @@ impl Packet {
             &packet_without_length[(length - padding_length as u32) as usize..];
 
         let random_padding: &[u8] = &packet_ending[..padding_length as usize];
-        let mac: &[u8] = &packet_ending[padding_length as usize..];
+        let mut mac = Vec::new();
+        if handle_mac {
+            mac = data[(length + 4) as usize..(length + 20) as usize].to_vec();
+        }
+
         Packet {
             length,
             padding_length,
             payload: payload.to_vec(),
             random_padding: random_padding.to_vec(),
-            mac: mac.to_vec(),
+            mac,
         }
     }
 
-    pub fn to_vec(&mut self) -> Vec<u8> {
+    pub fn to_vec(&self) -> Vec<u8> {
         let mut vec = Vec::new();
 
         vec.append(&mut self.length.to_be_bytes().to_vec().clone());
